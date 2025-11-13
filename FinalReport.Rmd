@@ -5,26 +5,191 @@ date: "2025-11-13"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r}
+
+library(arrow)
+
+files <- c(
+  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet"
+  #"train-00002-of-00007.parquet",
+ # "train-00003-of-00007.parquet",
+  #"train-00004-of-00007.parquet",
+ # "train-00005-of-00007.parquet",
+  #"train-00006-of-00007.parquet"
+)
+x <- lapply(files, read_parquet) %>%
+  bind_rows()
+x <- as.data.frame(x[, c("id", "model_a", "model_b",
+                         "winner", "category_tag")])
+dim(x)
+head(x[, 1:4])
+saveRDS(x, file = 'chatbot.data.rds')
+rm(list = ls())
+x <- readRDS(file = 'chatbot.data.rds')
+dim(x)
+head(x[, 1:4])
+```
+# Simple Win/Loss Bradley Terry Model
+
+We start simple. Only looking at win, loss outcomes, we fit a simple Bradley Terry model, which assigns each model $j$ an underlying ability parameter $\lambda_j$. When two models $i$ and $j$ are compared, the model assumes
+
+$$
+P(i \text{ beats } j)
+=
+\frac{\exp(\lambda_i)}{\exp(\lambda_i) + \exp(\lambda_j)}
+=
+\operatorname{logit}^{-1}(\lambda_i - \lambda_j).
+$$
+So this outcome is entirely governed entirely by ability differences. A higher $\lambda_i$ makes 
+model $i$ more likely to win against any opponent. After constructing the design matrix $X_{\text{reduced}}$, we estimate the ability parameters via a binomial, where the outcome is modeled as $y_i \sim \text{Bernoulli}(p_i)$ where $\text{logit}(p_i) = X_{i} \, \beta.$ The estimated coefficients $\hat\beta$ are the abilities: $\hat\lambda_1 = 0,$ $\hat\lambda_j = \hat\beta_{j-1}$.
+
+
+```{r}
+x_bt <- x %>%
+  filter(winner %in% c("model_a", "model_b"), model_a != model_b) %>%
+  mutate(y = ifelse(winner == "model_a", 1, 0))  
+
+players <- sort(unique(c(x_bt$model_a, x_bt$model_b)))
+J <- length(players)
+X <- matrix(0, nrow = nrow(x_bt), ncol = J,
+            dimnames = list(NULL, players))
+for (i in seq_len(nrow(x_bt))) {
+  p1 <- x_bt$model_a[i]; p2 <- x_bt$model_b[i]; X[i, p1] <- 1; X[i, p2] <- -1
+}
+X_reduced <- X[, -1, drop = FALSE]
+colnames(X_reduced) <- paste0("abil_", players[-1])
+bt_df <- cbind(y = x_bt$y, as.data.frame(X_reduced))
+bt_glm <- glm(y ~ . - 1, data = bt_df, family = binomial())
+summary(bt_glm)
+
 ```
 
-## R Markdown
+We assemble a table containing each model’s estimated ability, its standard error, and 
+its confidence interval. The models are sorted by decreasing ability, which serves a rank. This produces the final Bradley--Terry leaderboard.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+beta_hat <- coef(bt_glm)               
+abilities <- c(0, unname(beta_hat))     
+names(abilities) <- players
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+V_beta <- vcov(bt_glm)
 
-```{r cars}
-summary(cars)
+V_full <- matrix(0, nrow = J, ncol = J)
+V_full[-1, -1] <- V_beta
+colnames(V_full) <- rownames(V_full) <- players
+
+se_abilities <- sqrt(diag(V_full))
+z_crit <- 1.96
+
+leaderboard <- tibble(model   = players, ability = abilities, `s.e.` = se_abilities,
+  lwr = ability - z_crit * `s.e.`, upr = ability + z_crit * `s.e.`
+) %>%
+  arrange(desc(ability)) %>%
+  mutate(rank = row_number()) %>%
+  select(rank, model, ability, `s.e.`, lwr, upr)
+
+print(leaderboard, n = 20)
+
 ```
 
-## Including Plots
+```{r}
+nd_all <- expand.grid(
+  player1 = players, player2 = players, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+) %>% filter(player1 != player2)
 
-You can also embed plots, for example:
+matchups_ordered <- nd_all %>%
+  rowwise() %>% mutate(
+    eta = abilities[player1] - abilities[player2], p_player1_wins = plogis(eta)
+  ) %>% ungroup() %>% select(player1, player2, p_player1_wins)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Multinomial Regression Model 
+
+```{r}
+x_mn <- x %>%
+  filter(model_a != model_b) %>%
+  mutate(
+    outcome = case_when(winner == "model_a" ~ "A_win", winner == "model_b" ~ "B_win", winner == "tie" ~ "tie", winner == "both_bad" ~ "both_bad")
+  ) %>%
+  filter(!is.na(outcome))
+
+players <- sort(unique(c(x_mn$model_a, x_mn$model_b)))
+
+x_mn <- x_mn %>%
+  mutate(player1 = factor(model_a, levels = players), player2 = factor(model_b, levels = players))
+
+X1 <- model.matrix(~ player1 - 1, data = x_mn)
+X2 <- model.matrix(~ player2 - 1, data = x_mn)
+Z  <- X1 - X2
+
+Z  <- Z[, -1, drop = FALSE]
+colnames(Z) <- paste0("theta_", players[-1])
+
+df <- as.data.frame(Z)
+df$outcome <- factor(df$outcome <- x_mn$outcome, levels = c("A_win", "B_win", "tie", "both_bad"))
+
+y_A    <- as.integer(df$outcome == "A_win")
+y_B    <- as.integer(df$outcome == "B_win")
+y_Tie  <- as.integer(df$outcome == "tie")
+y_BBad <- as.integer(df$outcome == "both_bad")
+
+predictors_df <- transform(df, outcome = NULL)
+
+fit_A    <- glm(y_A ~ ., data = predictors_df, family = binomial())
+fit_B    <- glm(y_B ~ ., data = predictors_df, family = binomial())
+fit_Tie  <- glm(y_Tie ~ ., data = predictors_df, family = binomial())
+fit_BBad <- glm(y_BBad ~ ., data = predictors_df, family = binomial())
+
+#summary(fit_A); summary(fit_B); summary(fit_Tie); summary(fit_BBad)
+
+make_Z_row <- function(p1, p2, players) {
+  v1 <- rep(0, length(players)); v2 <- rep(0, length(players))
+  names(v1) <- names(v2) <- players
+  v1[p1] <-  1
+  v2[p2] <- -1
+  z <- v1 + v2           
+  z_reduced <- z[-1]    
+  names(z_reduced) <- paste0("theta_", players[-1])
+  as.data.frame(t(z_reduced))
+}
+
+all_pairs <- expand.grid(player1 = players, player2 = players,
+                         stringsAsFactors = FALSE) %>%filter(player1 != player2)
+
+Z_new <- do.call(rbind, lapply(seq_len(nrow(all_pairs)), function(k) {
+                   make_Z_row(all_pairs$player1[k], all_pairs$player2[k], players)}))
+
+eta_A_new    <- predict(fit_A,    newdata = Z_new, type = "link")
+eta_B_new    <- predict(fit_B,    newdata = Z_new, type = "link")
+eta_Tie_new  <- predict(fit_Tie,  newdata = Z_new, type = "link")
+eta_BBad_new <- predict(fit_BBad, newdata = Z_new, type = "link")
+
+denom <- exp(eta_A_new) + exp(eta_B_new) + exp(eta_Tie_new) + exp(eta_BBad_new)
+
+p_A_new <- exp(eta_A_new) / denom
+p_B_new <- exp(eta_B_new) / denom
+p_Tie_new  <- exp(eta_Tie_new) / denom
+p_BBad_new <- exp(eta_BBad_new)/ denom
+
+```
+
+
+```{r}
+matchups_full <- tibble(
+  player1 = all_pairs$player1,
+  player2 = all_pairs$player2,
+  p_A_win    = p_A_new,
+  p_B_win    = p_B_new,
+  p_Tie      = p_Tie_new,
+  p_BothBad  = p_BBad_new
+)
+
+matchups_full
+```
+
+
+
+
+
