@@ -30,6 +30,11 @@ x <- readRDS(file = 'chatbot.data.rds')
 dim(x)
 head(x[, 1:4])
 ```
+```{r}
+View(x)
+```
+
+
 # Simple Win/Loss Bradley Terry Model
 
 We start simple. Only looking at win, loss outcomes, we fit a simple Bradley Terry model, which assigns each model $j$ an underlying ability parameter $\lambda_j$. When two models $i$ and $j$ are compared, the model assumes
@@ -106,6 +111,33 @@ matchups_ordered <- nd_all %>%
 ```
 
 # Multinomial Regression Model 
+
+We treat each possible outcome of a matchup---$A$ win, $B$ win, tie, or both\_bad---as its own
+binary event. For each outcome $k \in \{\text{A},\text{B},\text{tie},\text{bad}\}$ we fit a logistic model
+$$
+\text{logit}\big( P(y_k = 1 \mid \text{models } i,j) \big)
+= \beta^{(k)}_0 + \beta^{(k)}_i - \beta^{(k)}_j.
+$$
+Each set of parameters $\beta^{(k)}$ describes how strong each model is with respect 
+to outcome $k$. For example, large $\beta^{(A)}_i$ means model $i$ tends to produce $A$ wins, 
+large $\beta^{(\text{tie})}_i$ means model $i$ tends to generate ties, and so on.
+
+When we pair two models $(i,j)$, each logistic regression produces a linear predictor
+$$
+\eta_k = \widehat{\beta}^{(k)}_0 + \widehat{\beta}^{(k)}_i - \widehat{\beta}^{(k)}_j,
+\qquad k \in \{\text{A},\text{B},\text{tie},\text{bad}\}.
+$$
+
+To convert these four logits into a valid probability distribution over outcomes,
+we exponentiate and normalize:
+$$
+p_k = \frac{e^{\eta_k}}
+           {e^{\eta_A} + e^{\eta_B} + e^{\eta_{\rm tie}} + e^{\eta_{\rm bad}}},
+\qquad k \in \{\text{A},\text{B},\text{tie},\text{bad}\}.
+$$
+
+These probabilities satisfy $p_A + p_B + p_{\rm tie} + p_{\rm bad} = 1,$ so for every ordered matchup $(i,j)$ the model returns a full probability distribution over the four possible outcomes.
+
 
 ```{r}
 x_mn <- x %>%
@@ -190,6 +222,107 @@ matchups_full
 ```
 
 
+# BT with ties
+
+```{r}
+x_bt_tie <- x %>%
+filter(winner %in% c("model_a", "model_b", "tie"),
+model_a != model_b)
+
+players <- sort(unique(c(x_bt_tie$model_a, x_bt_tie$model_b)))
+J <- length(players)
+```
+
+```{r}
+bt_tie_loglik <- function(par, dat, players) {
+theta <- par[1:(length(players) - 1)] 
+log_nu <- par[length(players)] 
+lambda <- c(0, theta) 
+names(lambda) <- players
+nu <- exp(log_nu) 
+ll <- 0
+for (k in seq_len(nrow(dat))) {
+i_name <- dat$model_a[k]
+j_name <- dat$model_b[k]
+win <- dat$winner[k]
+li <- lambda[i_name]
+lj <- lambda[j_name]
+ri <- exp(li)
+rj <- exp(lj)
+
+denom <- ri + rj + nu * sqrt(ri * rj)
+if (win == "model_a") {
+  ll <- ll + log(ri) - log(denom)
+} else if (win == "model_b") {
+  ll <- ll + log(rj) - log(denom)
+} else if (win == "tie") {
+  ll <- ll + log(nu * sqrt(ri * rj)) - log(denom)
+}
+}
+-ll
+}
+```
 
 
+```{r}
+bt_trace <- list(iter = 0, values = numeric()) 
+
+bt_tie_loglik_traced <- function(par, dat, players) {
+val <- bt_tie_loglik(par, dat, players)
+
+bt_trace$iter <- bt_trace$iter + 1
+bt_trace$values[bt_trace$iter] <- val
+
+#cat("Iter:", bt_trace$iter, " Neg log-lik:", val, "\n")
+flush.console()
+
+return(val)
+}
+
+init_par <- c(rep(0, J - 1), 0)
+
+fit_bt_tie <- optim(
+par = init_par,
+fn = bt_tie_loglik_traced,
+dat = x_bt_tie,
+players = players,
+method = "BFGS",
+hessian = TRUE,
+control = list(reltol = 1e-3, trace = 1) 
+)
+
+fit_bt_tie$convergence
+```
+
+```{r}
+theta_hat <- fit_bt_tie$par[1:(J - 1)]
+log_nu_hat <- fit_bt_tie$par[J]
+
+abilities_tie <- c(0, theta_hat)
+names(abilities_tie) <- players
+nu_hat <- exp(log_nu_hat)
+H_par <- fit_bt_tie$hessian
+V_par <- solve(H_par)
+V_theta <- V_par[1:(J - 1), 1:(J - 1), drop = FALSE]
+
+V_full_abilities <- matrix(0, nrow = J, ncol = J)
+V_full_abilities[-1, -1] <- V_theta
+colnames(V_full_abilities) <- rownames(V_full_abilities) <- players
+
+se_abilities_tie <- sqrt(diag(V_full_abilities))
+z_crit <- 1.96
+
+leaderboard_tie <- tibble(
+model = players,
+ability = abilities_tie,
+s.e. = se_abilities_tie,
+lwr = ability - z_crit * s.e.,
+upr = ability + z_crit * s.e.
+) %>%
+arrange(desc(ability)) %>%
+mutate(rank = row_number()) %>%
+select(rank, model, ability, s.e., lwr, upr)
+
+print(leaderboard_tie, n = 20)
+```
 
