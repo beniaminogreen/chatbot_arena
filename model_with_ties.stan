@@ -21,7 +21,9 @@ model {
 generated quantities {
  matrix [N, 2]  preds;
  for (i in 1:N) {
+  // A wins
   preds[i,1] = 1 - inv_logit(theta[model_a[i]] -theta[model_b[i]] - cutpoints[1]);
+  // Tie
   preds[i,2] = inv_logit(theta[model_a[i]] -theta[model_b[i]] - cutpoints[1]) - inv_logit(theta[model_a[i]] -theta[model_b[i]] - cutpoints[2]);
   }
 }

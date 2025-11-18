@@ -7,12 +7,11 @@ parquet_files <- list.files(pattern = "*.parquet")
 df <- open_dataset(parquet_files) %>%
   group_by(model_a, model_b, winner) %>%
   summarize(n = n()) %>%
-  filter(winner != "both_bad") %>%
   collect() %>%
   drop_na()
 
 df_no_ties <- df %>%
-  filter(winner != "tie")
+  filter(!winner %in% c("tie", "both_bad"))
 model_names <- unique(c(df$model_a, df$model_b))
 n_models <- length(model_names)
 model_lookup <- 1:n_models
@@ -25,6 +24,7 @@ stan_df_no_ties <- df_no_ties %>%
     winner = as.numeric(winner == "model_a")
   )
 
+
 stan_df <- df %>%
   mutate(
     model_a = model_lookup[model_a],
@@ -33,8 +33,10 @@ stan_df <- df %>%
       winner,
       "model_a" ~ 3,
       "tie" ~ 2,
-      "model_b" ~ 1
-    )
+      "model_b" ~ 1,
+      "both_bad" ~ 99,
+    ),
+    both_bad = as.integer(winner == 99)
   )
 
 
@@ -44,15 +46,15 @@ stan_data <- list(
   model_a = stan_df$model_a,
   model_b = stan_df$model_b,
   winner = stan_df$winner,
+  both_bad = stan_df$both_bad,
   num = stan_df$n
 )
 
-
 stan_draws <- stan(
-  file = "model_with_ties.stan",
+  file = "model_both.stan",
   data = stan_data,
   chains = 4, # number of Markov chains
-  warmup = 200, # number of warmup iterations per chain
+  warmup = 100, # number of warmup iterations per chain
   iter = 200,
   cores = 4,
 )
@@ -60,14 +62,16 @@ stan_draws <- stan(
 posterior_means <- get_posterior_mean(stan_draws, "theta") %>%
   rowMeans()
 
-df <- tibble(
-  model_a = 1:length(posterior_means),
-  score = posterior_means,
-)
+
+test_df <-
+  tibble(
+    model_a = model_lookup,
+    score = posterior_means
+  )
 
 stan_df %>%
-  inner_join(df) %>%
-  group_by(model_a) %>%
+  inner_join(test_df) %>%
+  filter(!both_bad) %>%
   summarize(
     win_rate = sum(n[winner == 3]) / sum(n),
     score = mean(score)
