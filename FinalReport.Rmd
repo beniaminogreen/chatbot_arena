@@ -1,39 +1,41 @@
 ---
 title: "Final Report"
-author: "Ivan Sinyavin"
-date: "2025-11-13"
+author: "Ivan Sinyavin and Ben Green"
+date: "2025-12-02"
 output: pdf_document
 ---
 
-```{r}
-
+```{r, echo = F, message = F, include = F}
 library(arrow)
+library(tidyverse)
+library(knitr)
 
-files <- c(
-  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
-  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet"
-  #"train-00002-of-00007.parquet",
- # "train-00003-of-00007.parquet",
-  #"train-00004-of-00007.parquet",
- # "train-00005-of-00007.parquet",
-  #"train-00006-of-00007.parquet"
-)
-x <- lapply(files, read_parquet) %>%
-  bind_rows()
-x <- as.data.frame(x[, c("id", "model_a", "model_b",
-                         "winner", "category_tag")])
-dim(x)
-head(x[, 1:4])
+opts_chunk$set(cache=TRUE)
+
+# files <- c(
+#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet"
+#   #"train-00002-of-00007.parquet",
+#  # "train-00003-of-00007.parquet",
+#   #"train-00004-of-00007.parquet",
+#  # "train-00005-of-00007.parquet",
+#   #"train-00006-of-00007.parquet"
+# )
+
+files <- list.files(pattern="*.parquet")
+
+x <- open_dataset(files) %>% 
+  select(id, model_a, model_b, winner, category_tag) %>% 
+  as.data.frame()
+
+# dim(x)
+# head(x[, 1:4])
 saveRDS(x, file = 'chatbot.data.rds')
 rm(list = ls())
 x <- readRDS(file = 'chatbot.data.rds')
-dim(x)
-head(x[, 1:4])
+# dim(x)
+# head(x[, 1:4])
 ```
-```{r}
-View(x)
-```
-
 
 # Simple Win/Loss Bradley Terry Model
 
@@ -46,8 +48,31 @@ P(i \text{ beats } j)
 =
 \operatorname{logit}^{-1}(\lambda_i - \lambda_j).
 $$
-So this outcome is entirely governed entirely by ability differences. A higher $\lambda_i$ makes 
-model $i$ more likely to win against any opponent. After constructing the design matrix $X_{\text{reduced}}$, we estimate the ability parameters via a binomial, where the outcome is modeled as $y_i \sim \text{Bernoulli}(p_i)$ where $\text{logit}(p_i) = X_{i} \, \beta.$ The estimated coefficients $\hat\beta$ are the abilities: $\hat\lambda_1 = 0,$ $\hat\lambda_j = \hat\beta_{j-1}$.
+
+In this model, the probability of one opponent beating another are determined
+entirely by the difference in their unobserved abilities. A higher $\lambda_i$
+makes model $i$ more likely to win against any opponent. 
+
+This model can be estimated using a GLM with a bespoke predictor matrix $X_{\text{reduced}}$, which has one row for each obervation in our dataset, and $m-1$ columns, where $m$ is the number of models in our dataset. 
+
+We construct $X_{\text{reduced}}$ by first creating a $m \times n$ matrix $X$, which is definied entrywise as: 
+
+$$
+X_(i,j)=
+\begin{cases}
+  1 \quad \text{if model j is the first player in round i}\\
+  -1 \quad \text{if model j is the second player in round i}\\
+  0\quad \text{otherwise}
+\end{cases}
+$$
+
+We then remove the first column of $X$ for identifiability to obtain
+$X_{\text{reduced}}$. With the predictor matrix created, we can then estimate
+the Bradley-Terry model we estimate the ability parameters using a glm with a
+logistic link function, where the outcome is modeled as $y_i \sim
+\text{Bernoulli}(p_i)$ where $\text{logit}(p_i) = X_{i} \, \beta.$ The
+estimated coefficients $\hat\beta$ are the abilities: $\hat\lambda_1 = 0,$
+$\hat\lambda_j = \hat\beta_{j-1}$.
 
 
 ```{r}
@@ -60,18 +85,20 @@ J <- length(players)
 X <- matrix(0, nrow = nrow(x_bt), ncol = J,
             dimnames = list(NULL, players))
 for (i in seq_len(nrow(x_bt))) {
-  p1 <- x_bt$model_a[i]; p2 <- x_bt$model_b[i]; X[i, p1] <- 1; X[i, p2] <- -1
+  p1 <- x_bt$model_a[i]
+  p2 <- x_bt$model_b[i]
+  X[i, p1] <- 1
+  X[i, p2] <- -1
 }
 X_reduced <- X[, -1, drop = FALSE]
 colnames(X_reduced) <- paste0("abil_", players[-1])
 bt_df <- cbind(y = x_bt$y, as.data.frame(X_reduced))
 bt_glm <- glm(y ~ . - 1, data = bt_df, family = binomial())
-summary(bt_glm)
+##summary(bt_glm)
 
 ```
 
-We assemble a table containing each model’s estimated ability, its standard error, and 
-its confidence interval. The models are sorted by decreasing ability, which serves a rank. This produces the final Bradley--Terry leaderboard.
+We assemble a table containing each model’s estimated ability, its standard error, and its confidence interval. The models are sorted by decreasing ability, which serves a rank. This produces the final Bradley--Terry leaderboard.
 
 ```{r}
 beta_hat <- coef(bt_glm)               
@@ -104,32 +131,40 @@ nd_all <- expand.grid(
 ) %>% filter(player1 != player2)
 
 matchups_ordered <- nd_all %>%
-  rowwise() %>% mutate(
-    eta = abilities[player1] - abilities[player2], p_player1_wins = plogis(eta)
-  ) %>% ungroup() %>% select(player1, player2, p_player1_wins)
-
+  rowwise() %>% 
+  mutate(
+    eta = abilities[player1] - abilities[player2],
+    p_player1_wins = plogis(eta)
+    ) %>% 
+  ungroup() %>% 
+  select(player1, player2, p_player1_wins)
 ```
+
 
 # Multinomial Regression Model 
 
-We treat each possible outcome of a matchup---$A$ win, $B$ win, tie, or both\_bad---as its own
-binary event. For each outcome $k \in \{\text{A},\text{B},\text{tie},\text{bad}\}$ we fit a logistic model
+After fitting the Bradley-Terry model, we begin trying to create predictions
+for the probability of tying and the 'both bad outcomes' via multinomial
+regressions. In these models, we treat each possible outcome matchup---$A$ win, $B$ win, tie, or both\_bad---as its own binary event. For each outcome $k \in \{\text{A},\text{B},\text{tie},\text{bad}\}$ we fit a logistic model 
+
 $$
 \text{logit}\big( P(y_k = 1 \mid \text{models } i,j) \big)
 = \beta^{(k)}_0 + \beta^{(k)}_i - \beta^{(k)}_j.
 $$
-Each set of parameters $\beta^{(k)}$ describes how strong each model is with respect 
-to outcome $k$. For example, large $\beta^{(A)}_i$ means model $i$ tends to produce $A$ wins, 
-large $\beta^{(\text{tie})}_i$ means model $i$ tends to generate ties, and so on.
+
+Each set of parameters $\beta^{(k)}$ describes how strong each model is with
+respect to outcome $k$. For example, large $\beta^{(A)}_i$ means model $i$
+tends to produce $A$ wins, large $\beta^{(\text{tie})}_i$ means model $i$ tends to generate ties, and so on. 
 
 When we pair two models $(i,j)$, each logistic regression produces a linear predictor
+
 $$
 \eta_k = \widehat{\beta}^{(k)}_0 + \widehat{\beta}^{(k)}_i - \widehat{\beta}^{(k)}_j,
 \qquad k \in \{\text{A},\text{B},\text{tie},\text{bad}\}.
 $$
 
-To convert these four logits into a valid probability distribution over outcomes,
-we exponentiate and normalize:
+To convert these four logits into a valid probability distribution over outcomes, we exponentiate and normalize:
+
 $$
 p_k = \frac{e^{\eta_k}}
            {e^{\eta_A} + e^{\eta_B} + e^{\eta_{\rm tie}} + e^{\eta_{\rm bad}}},
@@ -223,7 +258,8 @@ matchups_full
 
 # BT with ties
 
-Davidson (1970) proposed a multiplicative extension that incorporates ties through an additional parameter \(\nu > 0\), which measures the propensity for ties. For a comparison between \(i\) and \(j\), the three outcome probabilities are:
+The multinomial regression models have the advantage of being able to provide predictions for every outcome, but do not incorporate our understanding that the outcome is ordinal. For this reason, we incoprotate an extension to the Bradley-Terry model proposed by Davidson (1970) that incorporates ties through an additional parameter \(\nu > 0\), which measures the propensity for ties. For a comparison between \(i\) and \(j\), the three outcome probabilities are:
+
 $$
 P(i > j)
 = \frac{r_i}{r_i + r_j + \nu \sqrt{r_i r_j}} .
@@ -251,8 +287,7 @@ $$
 $$
 
 
-
-```{r}
+```{r, eval = F}
 x_bt_tie <- x %>%
 filter(winner %in% c("model_a", "model_b", "tie"),
 model_a != model_b)
@@ -261,7 +296,7 @@ players <- sort(unique(c(x_bt_tie$model_a, x_bt_tie$model_b)))
 J <- length(players)
 ```
 
-```{r}
+```{r, eval = F}
 bt_tie_loglik <- function(par, dat, players) {
 theta <- par[1:(length(players) - 1)] 
 log_nu <- par[length(players)] 
@@ -292,7 +327,7 @@ if (win == "model_a") {
 ```
 
 
-```{r}
+```{r, eval = F}
 bt_trace <- list(iter = 0, values = numeric()) 
 
 bt_tie_loglik_traced <- function(par, dat, players) {
@@ -322,7 +357,7 @@ control = list(reltol = 1e-4, trace = 1)
 fit_bt_tie$convergence
 ```
 
-```{r}
+```{r, eval =F}
 theta_hat <- fit_bt_tie$par[1:(J - 1)]
 log_nu_hat <- fit_bt_tie$par[J]
 
@@ -340,7 +375,8 @@ select(rank, model, ability)
 
 print(leaderboard_tie, n = 20)
 ```
-```{r}
+
+```{r, eval = F }
 nd_all <- expand.grid(
 player1 = players,
 player2 = players,
@@ -383,7 +419,7 @@ matchups_compare
 
 ## Enchanced BT Draw Model with Both Lose Term
 
-```{r}
+```{r, eval = F}
 x_bt_tie <- x %>%
 filter(
 winner %in% c("model_a", "model_b", "tie", "both_bad"),
@@ -395,7 +431,7 @@ J <- length(players)
 
 ```
 
-```{r}
+```{r, eval = F}
 bt_tie_loglik <- function(par, dat, players) {
   theta <- par[1:(length(players) - 1)] 
 log_nu <- par[length(players)] 
@@ -440,7 +476,7 @@ if (win == "model_a") {
 }
 ```
 
-```{r}
+```{r, eval = F}
 bt_trace <- list(iter = 0, values = numeric())
 
 bt_tie_loglik_traced <- function(par, dat, players) {
@@ -467,7 +503,7 @@ control = list(reltol = 1e-4, trace = 1)
 
 fit_bt_tie$convergence
 ```
-```{r}
+```{r, eval = F}
 # Extract MLEs from optim fit
 theta_hat      <- fit_bt_tie$par[1:(J - 1)]
 log_nu_hat     <- fit_bt_tie$par[J]
@@ -523,7 +559,7 @@ matchups_enhanced
 #Enchanced BT Draw Model with Alternative Both-Lose Term
 
 
-```{r}
+```{r, eval = F}
 
 x_bt_tie <- x %>%
   filter(
@@ -603,7 +639,7 @@ fit_bt_tie_alt$convergence
 ```
 
 
-```{r}
+```{r, eval = F}
 
 
 
