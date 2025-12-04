@@ -9,20 +9,21 @@ output: pdf_document
 library(arrow)
 library(tidyverse)
 library(knitr)
+library(dplyr)
 
 opts_chunk$set(cache=TRUE)
 
-# files <- c(
-#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
-#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet"
-#   #"train-00002-of-00007.parquet",
-#  # "train-00003-of-00007.parquet",
-#   #"train-00004-of-00007.parquet",
-#  # "train-00005-of-00007.parquet",
-#   #"train-00006-of-00007.parquet"
-# )
+files <- c(
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
+  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
+ "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
+"/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
+ )
 
-files <- list.files(pattern="*.parquet")
+#files <- list.files(pattern="*.parquet")
 
 x <- open_dataset(files) %>% 
   select(id, model_a, model_b, winner, category_tag) %>% 
@@ -125,19 +126,81 @@ print(leaderboard, n = 20)
 
 ```
 
-```{r}
-nd_all <- expand.grid(
-  player1 = players, player2 = players, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
-) %>% filter(player1 != player2)
+```{r, figure.width=10, fig.height=10}
 
-matchups_ordered <- nd_all %>%
-  rowwise() %>% 
+players_ordered_full <- leaderboard %>%
+  arrange(desc(ability)) %>%
+  pull(model)
+
+top5    <- head(players_ordered_full, 5)  
+bottom5 <- tail(players_ordered_full, 5)   
+
+sub_players   <- c(top5, bottom5) |> unique()
+row_col_order <- players_ordered_full[players_ordered_full %in% sub_players]
+
+big_grid_sub <- big_grid %>%
+  filter(row_model %in% row_col_order,
+         col_model %in% row_col_order)
+
+big_grid_plot_sub <- big_grid_sub %>%
   mutate(
-    eta = abilities[player1] - abilities[player2],
-    p_player1_wins = plogis(eta)
-    ) %>% 
-  ungroup() %>% 
-  select(player1, player2, p_player1_wins)
+    row_idx = match(row_model, row_col_order),
+    col_idx = match(col_model, row_col_order),
+
+    sub_row = case_when(
+      outcome %in% c("p_left_wins", "p_top_wins") ~ 1L,  
+      TRUE                                         ~ 2L   
+    ),
+    sub_col = case_when(
+      outcome %in% c("p_left_wins", "p_tie") ~ 1L,       
+      TRUE                                   ~ 2L       
+    ),
+    x = (col_idx - 1) * 2 + sub_col,
+    y = (row_idx - 1) * 2 + sub_row,
+
+    outcome_label = case_when(
+      outcome == "p_top_wins"   ~ "Top wins",
+      outcome == "p_left_wins"  ~ "Left wins",
+      outcome == "p_tie"        ~ "Tie",
+      outcome == "p_both_lose"  ~ "Both lose"
+    )
+  )
+
+J_sub <- length(row_col_order)
+
+ggplot(big_grid_plot_sub, aes(x = x, y = y, fill = prob)) +
+  geom_tile(color = "white", linewidth = 0.1) +
+  geom_text(aes(label = sprintf("%.2f", prob)), size = 2) +
+  coord_fixed() +
+scale_fill_gradientn(
+  colours = c("grey85", "yellow", "red"),
+  values = scales::rescale(c(0, 0.5, 1))
+)+
+  scale_x_continuous(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  scale_y_reverse(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "Models (columns, top 5 + bottom 5)",
+    y = "Models (rows, top 5 + bottom 5)",
+    fill = "Probability",
+    title = "Bradley–Terry pairwise probabilities (top 5 and bottom 5 models)",
+    subtitle = "Each matchup cell is a 2×2 grid: TL=left model wins, TR=bottom wins, BL=tie, BR=both lose (0 in simple BT)."
+  ) +
+  theme_minimal(base_size = 9) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+
 ```
 
 
@@ -253,10 +316,96 @@ matchups_full <- tibble(
   p_BothBad  = p_BBad_new
 )
 
-matchups_full
 ```
 
-# BT with ties
+```{r, figure.width=10, fig.height=10}
+
+players_ordered_full <- leaderboard %>%
+  arrange(desc(ability)) %>%
+  pull(model)
+
+top5    <- head(players_ordered_full, 5)   
+bottom5 <- tail(players_ordered_full, 5)  
+
+sub_players   <- c(top5, bottom5) |> unique()
+row_col_order <- players_ordered_full[players_ordered_full %in% sub_players]
+
+pair_grid_mn <- expand.grid(
+  row_model = row_col_order,
+  col_model = row_col_order,
+  stringsAsFactors = FALSE,
+  KEEP.OUT.ATTRS = FALSE
+) %>%
+  filter(row_model != col_model) %>%
+  left_join(
+    matchups_full,
+    by = c("row_model" = "player1", "col_model" = "player2")
+  )
+
+big_grid_mn <- pair_grid_mn %>%
+  mutate(
+    p_left_win = p_A_win,
+    p_top_win  = p_B_win,
+    p_tie      = p_Tie,
+    p_bad      = p_BothBad
+  ) %>%
+  pivot_longer(
+    cols = c(p_left_win, p_top_win, p_tie, p_bad),
+    names_to = "outcome",
+    values_to = "prob"
+  ) %>%
+  mutate(
+    sub_row = case_when(
+      outcome %in% c("p_left_win", "p_top_win") ~ 1L,  # top row
+      TRUE                                      ~ 2L    # bottom row
+    ),
+    sub_col = case_when(
+      outcome %in% c("p_left_win", "p_tie") ~ 1L,       # left col
+      TRUE                                  ~ 2L        # right col
+    ),
+    row_idx = match(row_model, row_col_order),
+    col_idx = match(col_model, row_col_order),
+    x = (col_idx - 1) * 2 + sub_col,
+    y = (row_idx - 1) * 2 + sub_row
+  )
+
+J_sub <- length(row_col_order)
+
+ggplot(big_grid_mn, aes(x = x, y = y, fill = prob)) +
+  geom_tile(color = "white", linewidth = 0.1) +
+  geom_text(aes(label = sprintf("%.2f", prob)), size = 2) +
+  coord_fixed() +
+scale_fill_gradientn(
+  colours = c("grey85", "yellow", "red"),
+  values = scales::rescale(c(0, 0.5, 1))
+)+
+  scale_x_continuous(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  scale_y_reverse(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "Models (columns, ranked by simple BT)",
+    y = "Models (rows, ranked by simple BT)",
+    fill = "Probability",
+    title = "Multinomial model: pairwise outcome probabilities\n(top 5 and bottom 5 by Bradley–Terry ability)",
+    subtitle = "Each matchup cell is a 2×2 grid: TL=left wins, TR=bottom wins, BL=tie, BR=both bad."
+  ) +
+  theme_minimal(base_size = 9) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+# Bradley Terry with ties
 
 The multinomial regression models have the advantage of being able to provide predictions for every outcome, but do not incorporate our understanding that the outcome is ordinal. For this reason, we incoprotate an extension to the Bradley-Terry model proposed by Davidson (1970) that incorporates ties through an additional parameter \(\nu > 0\), which measures the propensity for ties. For a comparison between \(i\) and \(j\), the three outcome probabilities are:
 
@@ -417,6 +566,95 @@ p_tie
 matchups_compare
 ```
 
+
+```{r, figure.width=10, fig.height=10}
+
+players_ordered_full <- leaderboard %>%
+  arrange(desc(ability)) %>%
+  pull(model)
+
+top5    <- head(players_ordered_full, 5)
+bottom5 <- tail(players_ordered_full, 5)
+
+sub_players   <- c(top5, bottom5) |> unique()
+row_col_order <- players_ordered_full[players_ordered_full %in% sub_players]
+
+pair_grid_tie <- expand.grid(
+  row_model = row_col_order,
+  col_model = row_col_order,
+  stringsAsFactors = FALSE,
+  KEEP.OUT.ATTRS = FALSE
+) %>%
+  filter(row_model != col_model) %>%
+  left_join(
+    matchups_compare,
+    by = c("row_model" = "player1", "col_model" = "player2")
+  )
+
+big_grid_tie <- pair_grid_tie %>%
+  mutate(
+    p_left_win = p_tie_player1_win,
+    p_top_win  = p_tie_player2_win,
+    p_tie_only = p_tie,
+    p_both_lose = 0
+  ) %>%
+  pivot_longer(
+    cols = c(p_left_win, p_top_win, p_tie_only, p_both_lose),
+    names_to = "outcome",
+    values_to = "prob"
+  ) %>%
+  mutate(
+    sub_row = case_when(
+      outcome %in% c("p_left_win", "p_top_win") ~ 1L,
+      TRUE                                      ~ 2L
+    ),
+    sub_col = case_when(
+      outcome %in% c("p_left_win", "p_tie_only") ~ 1L,
+      TRUE                                       ~ 2L
+    ),
+    row_idx = match(row_model, row_col_order),
+    col_idx = match(col_model, row_col_order),
+    x = (col_idx - 1) * 2 + sub_col,
+    y = (row_idx - 1) * 2 + sub_row
+  )
+
+J_sub <- length(row_col_order)
+
+ggplot(big_grid_tie, aes(x = x, y = y, fill = prob)) +
+  geom_tile(color = "black", linewidth = 0.4) +
+  geom_text(aes(label = sprintf("%.2f", prob)), size = 2) +
+  coord_fixed() +
+  scale_fill_gradientn(
+    colours = c("grey85", "yellow", "red"),
+    values = scales::rescale(c(0, 0.5, 1))
+  ) +
+  scale_x_continuous(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  scale_y_reverse(
+    breaks = (2 * (1:J_sub)) - 0.5,
+    labels = row_col_order,
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "Models (columns, ranked by simple BT)",
+    y = "Models (rows, ranked by simple BT)",
+    fill = "Probability",
+    title = "Davidson Bradley–Terry with ties (top 5 and bottom 5)",
+    subtitle = "Each matchup cell is a 2×2 grid: TL=left wins, TR=top wins, BL=tie, BR=both lose (0 here)."
+  ) +
+  theme_minimal(base_size = 9) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+
 ## Enchanced BT Draw Model with Both Lose Term
 
 ```{r, eval = F}
@@ -555,151 +793,3 @@ matchups_enhanced <- all_pairs %>%
 matchups_enhanced
 
 ```
-
-#Enchanced BT Draw Model with Alternative Both-Lose Term
-
-
-```{r, eval = F}
-
-x_bt_tie <- x %>%
-  filter(
-    winner %in% c("model_a", "model_b", "tie", "both_bad"),
-    model_a != model_b
-  )
-
-players <- sort(unique(c(x_bt_tie$model_a, x_bt_tie$model_b)))
-J <- length(players)
-
-bt_tie_loglik_alt <- function(par, dat, players) {
-  theta      <- par[1:(length(players) - 1)]     
-  log_nu     <- par[length(players)]            
-  log_gamma  <- par[length(players) + 1]        
-  
-  lambda <- c(0, theta)                          
-  names(lambda) <- players
-  
-  nu    <- exp(log_nu)                           
-  gamma <- exp(log_gamma)                       
-  
-  ll <- 0
-  for (k in seq_len(nrow(dat))) {
-    i_name <- dat$model_a[k]
-    j_name <- dat$model_b[k]
-    win    <- dat$winner[k]
-    
-    li <- lambda[i_name]
-    lj <- lambda[j_name]
-    ri <- exp(li)
-    rj <- exp(lj)
-    
-    w_iwin    <- ri
-    w_jwin    <- rj
-    w_tie     <- nu * sqrt(ri * rj)
-    w_bothbad <- gamma / (1 + ri + rj)  # <-- changed here
-    
-    denom <- w_iwin + w_jwin + w_tie + w_bothbad
-    
-    if (win == "model_a") {
-      ll <- ll + log(w_iwin)    - log(denom)
-    } else if (win == "model_b") {
-      ll <- ll + log(w_jwin)    - log(denom)
-    } else if (win == "tie") {
-      ll <- ll + log(w_tie)     - log(denom)
-    } else if (win == "both_bad") {
-      ll <- ll + log(w_bothbad) - log(denom)
-    }
-  }
-  -ll
-}
-
-bt_trace_alt <- list(iter = 0, values = numeric())
-
-bt_tie_loglik_traced_alt <- function(par, dat, players) {
-  val <- bt_tie_loglik_alt(par, dat, players)
-  bt_trace_alt$iter   <- bt_trace_alt$iter + 1
-  bt_trace_alt$values[bt_trace_alt$iter] <- val
-  flush.console()
-  return(val)
-}
-
-init_par_alt <- c(rep(0, J - 1), 0, 0)
-
-fit_bt_tie_alt <- optim(
-  par     = init_par_alt,
-  fn      = bt_tie_loglik_traced_alt,
-  dat     = x_bt_tie,
-  players = players,
-  method  = "BFGS",
-  hessian = FALSE,
-  control = list(reltol = 1e-4, trace = 1)
-)
-
-fit_bt_tie_alt$convergence
-
-```
-
-
-```{r, eval = F}
-
-
-
-theta_hat_alt     <- fit_bt_tie_alt$par[1:(J - 1)]
-log_nu_hat_alt    <- fit_bt_tie_alt$par[J]
-log_gamma_hat_alt <- fit_bt_tie_alt$par[J + 1]
-
-abilities_alt <- c(0, theta_hat_alt)
-names(abilities_alt) <- players
-
-nu_hat_alt    <- exp(log_nu_hat_alt)
-gamma_hat_alt <- exp(log_gamma_hat_alt)
-
-leaderboard_alt <- tibble(
-  model   = players,
-  ability = abilities_alt
-) %>%
-  arrange(desc(ability)) %>%
-  mutate(rank = row_number()) %>%
-  select(rank, model, ability)
-
-print(leaderboard_alt, n = 20)
-
-
-all_pairs_alt <- expand.grid(
-  player1 = players,
-  player2 = players,
-  KEEP.OUT.ATTRS = FALSE,
-  stringsAsFactors = FALSE
-) %>%
-  filter(player1 != player2)
-
-matchups_enhanced_alt <- all_pairs_alt %>%
-  rowwise() %>%
-  mutate(
-    lambda1 = abilities_alt[player1],
-    lambda2 = abilities_alt[player2],
-    r1      = exp(lambda1),
-    r2      = exp(lambda2),
-    
-    w_iwin    = r1,
-    w_jwin    = r2,
-    w_tie     = nu_hat_alt * sqrt(r1 * r2),
-    w_bothbad = gamma_hat_alt / (1 + r1 + r2),   # <-- same alt form
-    
-    denom = w_iwin + w_jwin + w_tie + w_bothbad,
-    
-    p_player1_win = w_iwin    / denom,
-    p_player2_win = w_jwin    / denom,
-    p_tie         = w_tie     / denom,
-    p_both_bad    = w_bothbad / denom
-  ) %>%
-  ungroup() %>%
-  select(
-    player1, player2,
-    p_player1_win, p_player2_win,
-    p_tie, p_both_bad
-  )
-
-matchups_enhanced_alt
-
-```
-
