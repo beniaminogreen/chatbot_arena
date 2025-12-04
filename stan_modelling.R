@@ -24,7 +24,6 @@ stan_df_no_ties <- df_no_ties %>%
     winner = as.numeric(winner == "model_a")
   )
 
-
 stan_df <- df %>%
   mutate(
     model_a = model_lookup[model_a],
@@ -50,31 +49,55 @@ stan_data <- list(
   num = stan_df$n
 )
 
-stan_draws <- stan(
-  file = "model_both.stan",
-  data = stan_data,
-  chains = 4, # number of Markov chains
-  warmup = 100, # number of warmup iterations per chain
-  iter = 200,
-  cores = 4,
+both_model <-  stan_model("derail_model.stan")
+
+MAP <- optimizing(
+  both_model, 
+  data = stan_data
 )
 
-posterior_means <- get_posterior_mean(stan_draws, "theta") %>%
-  rowMeans()
+prediction_vector <- MAP$par[grepl("preds", names(MAP$par))]
+prediction_matrix <- matrix(prediction_vector, nrow = nrow(stan_df), ncol = 4)
+colnames(prediction_matrix) <- c("pred_a_win", "pred_b_win", "pred_tie", "pred_both_bad")
 
+full_df <- cbind(stan_df, prediction_matrix)  %>% 
+  uncount(n) 
 
-test_df <-
-  tibble(
-    model_a = model_lookup,
-    score = posterior_means
+matchups <- full_df %>% 
+  group_by(model_a, model_b) %>% 
+  select(-both_bad) %>% 
+  summarize(
+    perc_a_win = sum(winner == 1) / n(),
+    perc_b_win = sum(winner == 2) / n(),
+    perc_tie = sum(winner == 2) / n(),
+    perc_bb = sum(winner == 2) / n(),
+    pred_a_win = pred_a_win[1],
+    pred_b_win = pred_b_win[1],
+    pred_tie = pred_tie[1],
+    pred_both_bad = pred_both_bad[1]
   )
 
-stan_df %>%
-  inner_join(test_df) %>%
-  filter(!both_bad) %>%
-  summarize(
-    win_rate = sum(n[winner == 3]) / sum(n),
-    score = mean(score)
-  ) %>%
-  ggplot(aes(x = score, y = win_rate)) +
-  geom_point()
+ggplot(matchups) + 
+  geom_point(
+    aes(x=perc_a_win, y=pred_a_win), 
+  ) + 
+  geom_abline(slope=1)
+
+
+ggplot(matchups) + 
+  geom_point(
+    aes(x=perc_b_win, y=pred_b_win), 
+  ) + 
+  geom_abline(slope=1)
+
+ggplot(matchups) + 
+  geom_point(
+    aes(x=perc_tie, y=pred_tie), 
+  ) + 
+  geom_abline(slope=1)
+
+ggplot(matchups) + 
+  geom_point(
+    aes(x=perc_bb, y=pred_both_bad), 
+  ) + 
+  geom_abline(slope=1)
