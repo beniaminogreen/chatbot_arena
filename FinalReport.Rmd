@@ -17,17 +17,17 @@ library(dplyr)
 
 opts_chunk$set(cache=TRUE, echo = F)
 
-# files <- c(
-#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
-#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
-#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
-#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
-#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
-#  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
-# "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
-#  )
+files <- c(
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
+   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
+ "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
+ "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
+  )
 
-files <- list.files(pattern="*.parquet")
+#files <- list.files(pattern="*.parquet")
 
 x <- open_dataset(files) %>% 
   select(id, model_a, model_b, winner, category_tag) %>% 
@@ -159,8 +159,47 @@ probabilities over all outcomes, and it does not incorporate information from
 games that end in ties or both-bad outcomes, which may also reveal something
 about the 'skill' of each LLM.
 
-```{r, figure.width=10, fig.height=10, eval = F, include = F}
-## TODO: big_grid is not created in this notebook - we need to create it again so that we can render the final results
+```{r, figure.width=6, fig.height=6}
+
+nd_all <- expand.grid(
+  player1 = players,
+  player2 = players,
+  KEEP.OUT.ATTRS = FALSE,
+  stringsAsFactors = FALSE
+) %>%
+  dplyr::filter(player1 != player2)
+
+matchups_ordered <- nd_all %>%
+  rowwise() %>%
+  mutate(
+    eta = abilities[player1] - abilities[player2],
+    p_player1_wins = plogis(eta)
+  ) %>%
+  ungroup() %>%
+  select(player1, player2, p_player1_wins)
+
+big_grid <- expand.grid(
+  row_model = players,
+  col_model = players,
+  stringsAsFactors = FALSE,
+  KEEP.OUT.ATTRS = FALSE
+) %>%
+  dplyr::filter(row_model != col_model) %>%
+  left_join(
+    matchups_ordered,
+    by = c("row_model" = "player1", "col_model" = "player2")
+  ) %>%
+  mutate(
+    p_left_wins  = 1 - p_player1_wins,
+    p_top_wins   = p_player1_wins,
+    p_tie        = 0,
+    p_both_lose  = 0
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(p_left_wins, p_top_wins, p_tie, p_both_lose),
+    names_to = "outcome",
+    values_to = "prob"
+  )
 
 players_ordered_full <- leaderboard %>%
   arrange(desc(ability)) %>%
@@ -180,18 +219,16 @@ big_grid_plot_sub <- big_grid_sub %>%
   mutate(
     row_idx = match(row_model, row_col_order),
     col_idx = match(col_model, row_col_order),
-
     sub_row = case_when(
-      outcome %in% c("p_left_wins", "p_top_wins") ~ 1L,  
-      TRUE                                         ~ 2L   
+      outcome %in% c("p_left_wins", "p_top_wins") ~ 1L,
+      TRUE                                         ~ 2L
     ),
     sub_col = case_when(
-      outcome %in% c("p_left_wins", "p_tie") ~ 1L,       
-      TRUE                                   ~ 2L       
+      outcome %in% c("p_left_wins", "p_tie") ~ 1L,
+      TRUE                                   ~ 2L
     ),
     x = (col_idx - 1) * 2 + sub_col,
     y = (row_idx - 1) * 2 + sub_row,
-
     outcome_label = case_when(
       outcome == "p_top_wins"   ~ "Top wins",
       outcome == "p_left_wins"  ~ "Left wins",
@@ -206,10 +243,10 @@ ggplot(big_grid_plot_sub, aes(x = x, y = y, fill = prob)) +
   geom_tile(color = "white", linewidth = 0.1) +
   geom_text(aes(label = sprintf("%.2f", prob)), size = 2) +
   coord_fixed() +
-scale_fill_gradientn(
-  colours = c("grey85", "yellow", "red"),
-  values = scales::rescale(c(0, 0.5, 1))
-)+
+  scale_fill_gradientn(
+    colours = c("grey85", "yellow", "red"),
+    values = scales::rescale(c(0, 0.5, 1))
+  ) +
   scale_x_continuous(
     breaks = (2 * (1:J_sub)) - 0.5,
     labels = row_col_order,
@@ -221,19 +258,19 @@ scale_fill_gradientn(
     expand = c(0, 0)
   ) +
   labs(
-    x = "Models (columns, top 5 + bottom 5)",
-    y = "Models (rows, top 5 + bottom 5)",
+    x = "Models",
+    y = "Models",
     fill = "Probability",
-    title = "Bradley–Terry pairwise probabilities (top 5 and bottom 5 models)",
-    subtitle = "Each matchup cell is a 2×2 grid: TL=left model wins, TR=bottom wins, BL=tie, BR=both lose (0 in simple BT)."
+    title = "Bradley–Terry pairwise probabilities (for top 5 and bottom 5 models)",
+    subtitle = "For Each Matchup: TL=left model wins, TR=top wins, BL=tie, BR=both lose."
   ) +
   theme_minimal(base_size = 9) +
   theme(
     panel.grid = element_blank(),
     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-    plot.title = element_text(face = "bold")
+     plot.title = element_text(hjust = 0.4, face = "bold"),
+  plot.subtitle = element_text(hjust = 0.4)
   )
-
 
 ```
 
