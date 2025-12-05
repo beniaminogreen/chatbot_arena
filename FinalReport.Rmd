@@ -14,20 +14,22 @@ library(arrow)
 library(tidyverse)
 library(knitr)
 library(dplyr)
+library(patchwork)
 
 opts_chunk$set(cache=TRUE, echo = F)
+source("functions.R")
 
-files <- c(
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
- "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
- "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
-  )
+# files <- c(
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
+#  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
+#  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
+#   )
 
-#files <- list.files(pattern="*.parquet")
+files <- list.files(pattern="*.parquet")
 
 x <- open_dataset(files) %>% 
   select(id, model_a, model_b, winner, category_tag) %>% 
@@ -36,7 +38,6 @@ x <- open_dataset(files) %>%
 # dim(x)
 # head(x[, 1:4])
 saveRDS(x, file = 'chatbot.data.rds')
-rm(list = ls())
 x <- readRDS(file = 'chatbot.data.rds')
 # dim(x)
 # head(x[, 1:4])
@@ -363,11 +364,18 @@ denom <- exp(eta_A_new) + exp(eta_B_new) + exp(eta_Tie_new) + exp(eta_BBad_new)
 p_A_new <- exp(eta_A_new) / denom
 p_B_new <- exp(eta_B_new) / denom
 p_Tie_new  <- exp(eta_Tie_new) / denom
-p_BBad_new <- exp(eta_BBad_new)/ denom
+p_BBad_new <- exp(eta_BBad_new) / denom
 
 ```
 
-```{r}
+We test this model using a series of calibration plots and by evaluating its
+cross-entropy loss. High-cross entropy loss suggests that the model does
+assigns very low probability to the observed outcome of each match, while a
+low-cross entropy loss suggests that the model assigns high probability to
+observed outcomes
+
+```{r, fig.width = 8, fig.height = 8, message = F, echo = F, warning = F}
+
 matchups_full <- tibble(
   player1 = all_pairs$player1,
   player2 = all_pairs$player2,
@@ -376,7 +384,38 @@ matchups_full <- tibble(
   p_Tie      = p_Tie_new,
   p_BothBad  = p_BBad_new
 )
+
+output <- full_join(matchups_full,x, 
+  by = c("player1" = "model_a","player2" = "model_b")
+) %>%
+    group_by(player1, player2) %>% 
+    rename(
+      pred_a_win = p_A_win,
+      pred_b_win = p_B_win,
+      pred_tie = p_Tie,
+      pred_bb = p_BothBad,
+      model_a = player1,
+      model_b = player2
+    ) %>% 
+    summarize(
+      perc_a_win = sum(winner == "model_a") / n(),
+      perc_b_win = sum(winner == "model_b") / n(),
+      perc_tie = sum(winner == "tie") / n(),
+      perc_bb = sum(winner == "both_bad") / n(),
+      pred_a_win = mean(pred_a_win),
+      pred_b_win = mean(pred_b_win),
+      pred_tie = mean(pred_tie),
+      pred_bb = mean(pred_bb)
+    ) %>% 
+  drop_na()
+ 
+create_calibration_plots(output)
 ```
+
+The model appears to give reasonably calibrated estimates for the 'tie' and
+'both-bad' outcomes, but there is a clear attenuation when it comes to
+predicting the outcomes with a winner. Specifically, the model under-estimates
+the probabilities of winning / loosing in extreme matchups when two models with very different skill levels play each other, resulting in predictions that understate the imbalance in the matchup.
 
 ```{r, figure.width=6, fig.height=6}
 players_ordered_full <- leaderboard %>%
@@ -549,10 +588,8 @@ are substantially identical when estimating via maximum likelihood.
 In this section, we assess the performance of each model using a series of
 calibration plots and the cross-entropy loss when predicting the outcome of
 each match. The cross-entropy loss describes how well the model does when
-predicting the outcome of each match. High-cross entropy loss suggests that the
-model does assigns very low probability to the observed outcome of each match,
-while a low-cross entropy loss suggests that the model assigns high probability
-to observed outcomes
+predicting the outcome of each match. 
+
 
 We evaluate both of these models relative to a baseline ordered logistic
 regression model which assumes that the both-bad outcome happens with a fixed
@@ -591,12 +628,16 @@ should provide identical predictions conditional on the 'both-bad' outcomes not
 happening, so all improvements in cross-entropy loss must come from
 improvements in accurately predicting this (relatively rare) outcome.
 
+Given that this model is the best-performing out of the ones we consider, we
+report predictions from these models in the `prediction.csv` submitted with our
+assignment.
+
 ![Calibration Plot For Model 2](calibration_plots/derail_model_calibration.png)
 
 
 #### Leaderboard Produced by Flagship Model: 
 
-![Leaderboard Produced by Flagship Model 2](leaderboard_plots/derail_model.png)
+![Leaderboard Produced by Flagship](leaderboard_plots/derail_model.png)
 
 The ordering of these models are substantially identical to our basic
 Bradley-terry model that ignores tie outcomes and the 'both-bad' outcomes. The
@@ -616,7 +657,7 @@ In this report, we have considered several strategies for predicting the
 outcomes of each LLM matchup, and for quantifying the skill of each model. Our
 best-performing predictive model uses a ordered-logistic model to predict the
 outcomes of games that do not end in a 'both-bad' outcome, but assumes that
-each of the models has an indepenent chance of derailing the matchup and
+each of the models has an independent chance of derailing the matchup and
 forcing a 'both-bad' outcome. We report predictions and leaderboard rankings
-from this model, but our estimates of model performance are subsantially
+from this model, but our estimates of model performance are substantially
 identical across all the modelling strategies we test.
