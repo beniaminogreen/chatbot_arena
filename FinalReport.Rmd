@@ -230,10 +230,8 @@ big_grid_plot_sub <- big_grid_sub %>%
     x = (col_idx - 1) * 2 + sub_col,
     y = (row_idx - 1) * 2 + sub_row,
     outcome_label = case_when(
-      outcome == "p_top_wins"   ~ "Top wins",
-      outcome == "p_left_wins"  ~ "Left wins",
-      outcome == "p_tie"        ~ "Tie",
-      outcome == "p_both_lose"  ~ "Both lose"
+      outcome == "p_top_wins" ~ "Top wins",outcome == "p_left_wins" ~ "Left wins",
+      outcome == "p_tie"~ "Tie", outcome == "p_both_lose"  ~ "Both lose"
     )
   )
 
@@ -245,31 +243,24 @@ ggplot(big_grid_plot_sub, aes(x = x, y = y, fill = prob)) +
   coord_fixed() +
   scale_fill_gradientn(
     colours = c("grey85", "yellow", "red"),
-    values = scales::rescale(c(0, 0.5, 1))
-  ) +
+    values = scales::rescale(c(0, 0.5, 1))) +
   scale_x_continuous(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
+    breaks = (2 * (1:J_sub)) - 0.5, labels = row_col_order, expand = c(0, 0)) +
   scale_y_reverse(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
+    breaks = (2 * (1:J_sub)) - 0.5, labels = row_col_order,expand = c(0, 0)) +
   labs(
     x = "Models",
     y = "Models",
     fill = "Probability",
     title = "Bradley–Terry pairwise probabilities (for top 5 and bottom 5 models)",
-    subtitle = "For Each Matchup: TL=left model wins, TR=top wins, BL=tie, BR=both lose."
+    subtitle = "For Each Matchup: TL (top left)=row model wins, TR = column model wins, BL=tie, BR=both lose."
   ) +
   theme_minimal(base_size = 9) +
   theme(
     panel.grid = element_blank(),
     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-     plot.title = element_text(hjust = 0.4, face = "bold"),
-  plot.subtitle = element_text(hjust = 0.4)
+     plot.title = element_text(hjust = 0.6, face = "bold"),
+  plot.subtitle = element_text(hjust = 0.6)
   )
 
 ```
@@ -394,7 +385,6 @@ players_ordered_full <- leaderboard %>%
 
 top5    <- head(players_ordered_full, 5)   
 bottom5 <- tail(players_ordered_full, 5)  
-
 sub_players   <- c(top5, bottom5) |> unique()
 row_col_order <- players_ordered_full[players_ordered_full %in% sub_players]
 
@@ -405,32 +395,18 @@ pair_grid_mn <- expand.grid(
   KEEP.OUT.ATTRS = FALSE
 ) %>%
   filter(row_model != col_model) %>%
-  left_join(
-    matchups_full,
-    by = c("row_model" = "player1", "col_model" = "player2")
+  left_join(matchups_full, by = c("row_model" = "player1", "col_model" = "player2")
   )
 
 big_grid_mn <- pair_grid_mn %>%
   mutate(
-    p_left_win = p_A_win,
-    p_top_win  = p_B_win,
-    p_tie      = p_Tie,
-    p_bad      = p_BothBad
+    p_left_win = p_A_win,p_top_win  = p_B_win,p_tie = p_Tie,p_bad= p_BothBad
   ) %>%
-  pivot_longer(
-    cols = c(p_left_win, p_top_win, p_tie, p_bad),
-    names_to = "outcome",
-    values_to = "prob"
+  pivot_longer(cols = c(p_left_win, p_top_win, p_tie, p_bad),names_to = "outcome", values_to = "prob"
   ) %>%
   mutate(
-    sub_row = case_when(
-      outcome %in% c("p_left_win", "p_top_win") ~ 1L, 
-      TRUE ~ 2L    
-    ),
-    sub_col = case_when(
-      outcome %in% c("p_left_win", "p_tie") ~ 1L,      
-      TRUE   ~ 2L        
-    ),
+    sub_row = case_when(outcome %in% c("p_left_win", "p_top_win") ~ 1L, TRUE ~ 2L),
+    sub_col = case_when(outcome %in% c("p_left_win", "p_tie") ~ 1L,TRUE ~ 2L),
     row_idx = match(row_model, row_col_order),
     col_idx = match(col_model, row_col_order),
     x = (col_idx - 1) * 2 + sub_col,
@@ -447,29 +423,21 @@ scale_fill_gradientn(
   colours = c("grey85", "yellow", "red"),
   values = scales::rescale(c(0, 0.5, 1))
 )+
-  scale_x_continuous(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
-  scale_y_reverse(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
+  scale_x_continuous(breaks = (2 * (1:J_sub)) - 0.5, labels = row_col_order,expand = c(0, 0)) +
+  scale_y_reverse(breaks = (2 * (1:J_sub)) - 0.5,labels = row_col_order,expand = c(0, 0)) +
   labs(
     x = "Models (columns, ranked by simple BT)",
     y = "Models (rows, ranked by simple BT)",
     fill = "Probability",
     title = "Pairwise outcome probabilities (for top 5 and bottom 5 by BT ability)",
-    subtitle = "For each matchup: TL=left wins, TR=bottom wins, BL=tie, BR=both bad."
+    subtitle = "For each matchup: TL (top left) =row model wins, TR= column model wins, BL=tie, BR=both bad."
   ) +
   theme_minimal(base_size = 9) +
   theme(
     panel.grid = element_blank(),
     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-      plot.title    = element_text(hjust = 0.4, face = "bold"),
-     plot.subtitle = element_text(hjust = 0.4)
+      plot.title    = element_text(hjust = 0.6, face = "bold"),
+     plot.subtitle = element_text(hjust = 0.6)
   )
 ```
 
