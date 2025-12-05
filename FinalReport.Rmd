@@ -276,7 +276,7 @@ ggplot(big_grid_plot_sub, aes(x = x, y = y, fill = prob)) +
 
 # Multinomial Regression Model 
 
-Because the simple model can't generate predictions for all outcomes, e try to
+Because the simple model can't generate predictions for all outcomes, we try to
 create predictions for the probability of tying and the 'both bad outcomes' via
 multinomial regressions. In these models, we treat each possible outcome
 matchup---$A$ win, $B$ win, tie, or both\_bad---as its own binary event. For
@@ -641,3 +641,14 @@ while the estimates from the Bradley-terry model are estimated relative to the
 held-out Amazon model. However, these differences are not relevant when
 computing a ranking of the models.
 
+
+## Conclusion
+
+In this report, we have considered several strategies for predicting the
+outcomes of each LLM matchup, and for quantifying the skill of each model. Our
+best-performing predictive model uses a ordered-logistic model to predict the
+outcomes of games that do not end in a 'both-bad' outcome, but assumes that
+each of the models has an indepenent chance of derailing the matchup and
+forcing a 'both-bad' outcome. We report predictions and leaderboard rankings
+from this model, but our estimates of model performance are subsantially
+identical across all the modelling strategies we test.
