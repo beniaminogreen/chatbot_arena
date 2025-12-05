@@ -1,3 +1,32 @@
+# STAN modelling of LLM-Arena Data
+#
+# Ben Green and Ivan Siynavin 
+#
+# This script performs the modelling to predict outcomes of the LLM-Arena matches using a set of custom models written in STAN. 
+#
+# The script expects the stan models and parquet files to be all located in the same directory, as shown below: 
+#
+#```
+#├── basic_model_2.stan
+#├── basic_model.stan
+#├── calibration_plots/
+#├── common_faliure_prob.stan
+#├── derail_model.stan
+#├── model_both.stan
+#├── model_with_ties.stan
+#├── train-00000-of-00007.parquet
+#├── train-00001-of-00007.parquet
+#├── train-00002-of-00007.parquet
+#├── train-00003-of-00007.parquet
+#├── train-00004-of-00007.parquet
+#├── train-00005-of-00007.parquet
+#└── train-00006-of-00007.parquet
+#```
+#
+# Outputs are written to the `calibration_plots` directory, as well as to `predictions.csv` 
+
+ 
+
 library(arrow)
 library(tidyverse)
 library(rstan)
@@ -210,8 +239,9 @@ create_plots <- function(df, model_name = NULL) {
 
   wrap_plots(plots) +
     plot_annotation(
-      title = str_glue("Calibration Plot for {model_name} Model"), 
-      subtitle = str_glue("Cross-Entropy Loss: {ce_loss}")
+      title = str_glue("Calibration Plot for {model_name}"), 
+      subtitle = str_glue("Cross-Entropy Loss: {ce_loss}"), 
+      caption = "Each point is a LLM-LLM dyad"
     )
 }
 
@@ -239,15 +269,19 @@ constant_forecast <- stan_df %>%
 
 plts <- create_plots(constant_forecast, "Constant Forecast")
 ggsave("calibration_plots/baseline.png", plts, width = 8, height = 8)
-matchups_d <- create_matchup_df("derail_model.stan", stan_data)
-plts <- create_plots(matchups_d, "Derail Model")
-ggsave("calibration_plots/derail_model_calibration.png", plts, width = 8, height = 8)
-matchups_b <- create_matchup_df("model_both.stan", stan_data)
-plts <- create_plots(matchups_b, "model 1")
-ggsave("calibration_plots/both_model_calibration.png", plts,  width = 8, height = 8)
+
 matchups_c <- create_matchup_df("common_faliure_prob.stan", stan_data)
-plt <- create_plots(matchups_c, "Global Both Bad Probability")
+plts <- create_plots(matchups_c, "Ordered-Logistic Baseline")
 ggsave("calibration_plots/common_faliure_prob_calibration.png", plts, width = 8, height = 8)
+
+matchups_d <- create_matchup_df("derail_model.stan", stan_data)
+plts <- create_plots(matchups_d, "Model 2")
+ggsave("calibration_plots/derail_model_calibration.png", plts, width = 8, height = 8)
+
+matchups_b <- create_matchup_df("model_both.stan", stan_data)
+plts <- create_plots(matchups_b, "Model 1")
+ggsave("calibration_plots/both_model_calibration.png", plts,  width = 8, height = 8)
+
 
 
 

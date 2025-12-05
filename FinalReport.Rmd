@@ -1,8 +1,12 @@
 ---
-title: "Final Report"
+title: "Analysis of LLM Data"
 author: "Ivan Sinyavin and Ben Green"
 date: "2025-12-02"
-output: pdf_document
+output: 
+  pdf_document: 
+    toc: true
+header-includes:
+  - \usepackage{float}
 ---
 
 ```{r, echo = F, message = F, include = F}
@@ -11,19 +15,19 @@ library(tidyverse)
 library(knitr)
 library(dplyr)
 
-opts_chunk$set(cache=TRUE)
+opts_chunk$set(cache=TRUE, echo = F)
 
-files <- c(
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
-  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
-   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
- "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
-"/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
- )
+# files <- c(
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00000-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00001-of-00007.parquet",
+#   "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00002-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00003-of-00007.parquet",
+#    "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00004-of-00007.parquet",
+#  "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00005-of-00007.parquet",
+# "/Users/ivansinyavin/Documents/Case Studies/Week 5/train-00006-of-00007.parquet"
+#  )
 
-#files <- list.files(pattern="*.parquet")
+files <- list.files(pattern="*.parquet")
 
 x <- open_dataset(files) %>% 
   select(id, model_a, model_b, winner, category_tag) %>% 
@@ -38,7 +42,11 @@ x <- readRDS(file = 'chatbot.data.rds')
 # head(x[, 1:4])
 ```
 
-# Simple Win/Loss Bradley Terry Model
+# Introduction
+
+In this report, we document our process of modelling the lm arena matchup data. We begin with a Bradley-Terry model which provides a basic leaderboard that ignores matches that end in a tie or a both-bad outcome. We then consider a series of mutlinomial logistic regressions which are able to accurately predict each outcome, but do not provide interpretable rankings of the LLMs. Finally, we develop and fit a series of models that can provide both a ranking of models while predicting each of the four outcomes.
+
+# Bradley Terry Model
 
 We start simple. Only looking at win, loss outcomes, we fit a simple Bradley Terry model, which assigns each model $j$ an underlying ability parameter $\lambda_j$. When two models $i$ and $j$ are compared, the model assumes
 
@@ -54,7 +62,9 @@ In this model, the probability of one opponent beating another are determined
 entirely by the difference in their unobserved abilities. A higher $\lambda_i$
 makes model $i$ more likely to win against any opponent. 
 
-This model can be estimated using a GLM with a bespoke predictor matrix $X_{\text{reduced}}$, which has one row for each obervation in our dataset, and $m-1$ columns, where $m$ is the number of models in our dataset. 
+This model can be estimated using a GLM with a bespoke predictor matrix
+$X_{\text{reduced}}$, which has one row for each obervation in our dataset, and
+$m-1$ columns, where $m$ is the number of models in our dataset. 
 
 We construct $X_{\text{reduced}}$ by first creating a $m \times n$ matrix $X$, which is definied entrywise as: 
 
@@ -76,7 +86,7 @@ estimated coefficients $\hat\beta$ are the abilities: $\hat\lambda_1 = 0,$
 $\hat\lambda_j = \hat\beta_{j-1}$.
 
 
-```{r}
+```{r, echo = F}
 x_bt <- x %>%
   filter(winner %in% c("model_a", "model_b"), model_a != model_b) %>%
   mutate(y = ifelse(winner == "model_a", 1, 0))  
@@ -99,9 +109,14 @@ bt_glm <- glm(y ~ . - 1, data = bt_df, family = binomial())
 
 ```
 
-We assemble a table containing each model’s estimated ability, its standard error, and its confidence interval. The models are sorted by decreasing ability, which serves a rank. This produces the final Bradley--Terry leaderboard.
+We then extract from the glm each model’s estimated ability, and the standard
+error associated with this estimate, to form a confidence interval. The models
+are sorted by decreasing ability, which serves a rank. This produces the a
+Bradley--Terry leaderboard. Confidence intervals and ability estimates are
+calculated with respect to the `amazon-nova-experimental` model, which is held
+out as a reference category.
 
-```{r}
+```{r, fig.height = 7, echo = F, fig.pos = "H"}
 beta_hat <- coef(bt_glm)               
 abilities <- c(0, unname(beta_hat))     
 names(abilities) <- players
@@ -122,11 +137,30 @@ leaderboard <- tibble(model   = players, ability = abilities, `s.e.` = se_abilit
   mutate(rank = row_number()) %>%
   select(rank, model, ability, `s.e.`, lwr, upr)
 
-print(leaderboard, n = 20)
 
+leaderboard %>% 
+  ggplot(aes(x= reorder(model, ability), y = ability)) + 
+    geom_point() + 
+    geom_linerange(aes(ymin=lwr, ymax = upr)) + 
+    coord_flip() + 
+    theme_bw() + 
+    ylab("Estimated Ability Score") + 
+    xlab("Model") + 
+    ggtitle(
+    "Estimated Model Rankings (Best to Worst)", 
+    subtitle = "Bradley-Terry Model"
+  )
 ```
 
-```{r, figure.width=10, fig.height=10}
+This model is a good starting point. It can be used to rank the relative
+performance of the models, and it can accurately predict the outcomes of games
+that end in either LLM winning. The main drawback it is not able to provide
+probabilities over all outcomes, and it does not incorporate information from
+games that end in ties or both-bad outcomes, which may also reveal something
+about the 'skill' of each LLM.
+
+```{r, figure.width=10, fig.height=10, eval = F, include = F}
+## TODO: big_grid is not created in this notebook - we need to create it again so that we can render the final results
 
 players_ordered_full <- leaderboard %>%
   arrange(desc(ability)) %>%
@@ -203,21 +237,21 @@ scale_fill_gradientn(
 
 ```
 
-
 # Multinomial Regression Model 
 
-After fitting the Bradley-Terry model, we begin trying to create predictions
-for the probability of tying and the 'both bad outcomes' via multinomial
-regressions. In these models, we treat each possible outcome matchup---$A$ win, $B$ win, tie, or both\_bad---as its own binary event. For each outcome $k \in \{\text{A},\text{B},\text{tie},\text{bad}\}$ we fit a logistic model 
+Because the simple model can't generate predictions for all outcomes, e try to
+create predictions for the probability of tying and the 'both bad outcomes' via
+multinomial regressions. In these models, we treat each possible outcome
+matchup---$A$ win, $B$ win, tie, or both\_bad---as its own binary event. For
+each outcome $k \in \{\text{A},\text{B},\text{tie},\text{bad}\}$ we fit a
+logistic model 
 
 $$
 \text{logit}\big( P(y_k = 1 \mid \text{models } i,j) \big)
 = \beta^{(k)}_0 + \beta^{(k)}_i - \beta^{(k)}_j.
 $$
 
-Each set of parameters $\beta^{(k)}$ describes how strong each model is with
-respect to outcome $k$. For example, large $\beta^{(A)}_i$ means model $i$
-tends to produce $A$ wins, large $\beta^{(\text{tie})}_i$ means model $i$ tends to generate ties, and so on. 
+Each set of parameters $\beta^{(k)}$ describes how strong each model is with respect to outcome $k$. For example, large $\beta^{(A)}_i$ means model $i$ tends to produce $A$ wins, large $\beta^{(\text{tie})}_i$ means model $i$ tends to generate ties, and so on. 
 
 When we pair two models $(i,j)$, each logistic regression produces a linear predictor
 
@@ -237,7 +271,7 @@ $$
 These probabilities satisfy $p_A + p_B + p_{\rm tie} + p_{\rm bad} = 1,$ so for every ordered matchup $(i,j)$ the model returns a full probability distribution over the four possible outcomes.
 
 
-```{r}
+```{r,fig.height=10}
 x_mn <- x %>%
   filter(model_a != model_b) %>%
   mutate(
@@ -305,7 +339,6 @@ p_BBad_new <- exp(eta_BBad_new)/ denom
 
 ```
 
-
 ```{r}
 matchups_full <- tibble(
   player1 = all_pairs$player1,
@@ -315,11 +348,9 @@ matchups_full <- tibble(
   p_Tie      = p_Tie_new,
   p_BothBad  = p_BBad_new
 )
-
 ```
 
 ```{r, figure.width=10, fig.height=10}
-
 players_ordered_full <- leaderboard %>%
   arrange(desc(ability)) %>%
   pull(model)
@@ -402,394 +433,156 @@ scale_fill_gradientn(
     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
     plot.title = element_text(face = "bold")
   )
-
 ```
 
-# Bradley Terry with ties
+# Flagship Models - Ordered Logistic + Both-Bad Outcomes
 
-The multinomial regression models have the advantage of being able to provide predictions for every outcome, but do not incorporate our understanding that the outcome is ordinal. For this reason, we incoprotate an extension to the Bradley-Terry model proposed by Davidson (1970) that incorporates ties through an additional parameter \(\nu > 0\), which measures the propensity for ties. For a comparison between \(i\) and \(j\), the three outcome probabilities are:
+So far, we have created models that are able to provide rankings for the units
+and seperate models that were able to predict all four outcomes. In this
+section, we synthesize the two and create a series of models that are able to
+accurately predict all outcomes and also provide an interpretable leaderboard.
+
+Our main idea in developing this model was to assume that the games are played
+roughly as follows:
+
+1. Each model flips an (unobserved) biased coin which determines if they will
+   fail (these failures could be from failing to understand the prompt, or by
+giving a answer non-responsive to the question asked). 
+2. If assumming the models do not make an error, a game is played to a win,
+   loose, or tie outcome which we observe.
+
+This corresponds to a measurement error model in which the outcome of games is
+sometimes not reported because the performance of each mode does not cross a
+certain threshold. 
+
+We assume that the probability of wins, losses, and ties can
+be well-described by an ordered logistic regression model, which performs well
+fit to a dataset that exludes the 'both-bad' outcomes. Formally, for two models
+$i$ and $j$, we model the probaility of each outcome as: 
+
+\begin{equation}
+\begin{split}
+  P(i \text{ beats } j | ! \text{both bad}) &=  1-\text{logit}^{-1]}(\lambda_i - \lambda_j - c_1) \\
+  P(i \text{ ties } j | ! \text{both bad}) &=   \text{logit}^{-1]}(\lambda_i - \lambda_j - c_2) \\
+  P(j \text{ beats  } i | ! \text{both bad}) &=  P(i \text{ beats } j | ! \text{both bad}) -  P(i \text{ ties } j | ! \text{both bad})
+\end{split}
+\end{equation}
+
+Where $c_1$, $c_2$ are two cutpoint parameters that are also estimated when
+fitting the model. These cutpoints help determine the relative difficulty of
+tying vs winning for two closely-matched opponents. If $c_1$ and $c_2$ are very
+close to each other, then it will be very difficult for models to tie as ties
+are very unlikely. When $c_1$ and $c_2$ are far apart, it will be much easier
+for ties to occur. 
+
+
+Across both models, we assume that each model $i$ has an indepent chance of a
+'faliure', which can lead to a 'both-bad' outcome, interfering with our
+observation. Specifically, for each game, each model flips a baised coin with
+probaility of heads $\rho_i$ to get an indicator variable $F_i$, which
+determines how their outcome is observed. We consider two ways in which these
+failiures could create a 'both-bad' outcome: 
+
+1. In model 1, a failure makes an LLM ineligible to win this round. We observe 'both-bad' if both models fail
+2. In model 2, either model can derail the competition. If either model fails, we observe the 'both-bad' outcome.
+
+We discuss these two models in more detail below.
+
+#### Model 1:
+
+In model 1, we assume that a player failing means they are inelligble to win.
+Thus, if neither model fails, then the observed outcome is $Y_{ij}$. If either
+fails and the other does not, then their opponent wins. Finally, if both models
+fail, then the 'both-bad' outcome is observed. This logic is summarized below:
 
 $$
-P(i > j)
-= \frac{r_i}{r_i + r_j + \nu \sqrt{r_i r_j}} .
-$$
-$$
-P(j > i)
-= \frac{r_j}{r_i + r_j + \nu \sqrt{r_i r_j}} .
-$$
-$$
-P(i \sim j)
-= \frac{\nu \sqrt{r_i r_j}}{r_i + r_j + \nu \sqrt{r_i r_j}} .
-$$
-The term \(\nu \sqrt{r_i r_j}\) increases the probability of a tie when \(r_i \approx r_j\), matching the intuition that ties occur most between evenly matched opponents. The total log-likelihood:
-$$
-\ell(\theta)
-=
-\sum_{k=1}^n 
-\log P_{Y_k}(i_k, j_k \mid \theta).
-$$
-And we estimate the parameters via numerical optimization:
-$$
-\hat{\theta}
-=
-\arg\min_{\theta} \; -\ell(\theta).
+Y^\text{observed}_{ij} = 
+\begin{cases}
+Y_{ij} \quad \quad  (F_i \neq 1) \& (F_j \neq 1) \\
+\text{A wins} \quad  \quad (F_i \neq 1) \& (F_j = 1) \\
+\text{B wins} \quad  \quad (F_i = 1) \& (F_j \neq 1) \\
+\text{both bad} \quad  \quad (F_i = 1) \& (F_j = 1)\\
+\end{cases}
 $$
 
-
-```{r, eval = F}
-x_bt_tie <- x %>%
-filter(winner %in% c("model_a", "model_b", "tie"),
-model_a != model_b)
-
-players <- sort(unique(c(x_bt_tie$model_a, x_bt_tie$model_b)))
-J <- length(players)
-```
-
-```{r, eval = F}
-bt_tie_loglik <- function(par, dat, players) {
-theta <- par[1:(length(players) - 1)] 
-log_nu <- par[length(players)] 
-lambda <- c(0, theta) 
-names(lambda) <- players
-nu <- exp(log_nu) 
-ll <- 0
-for (k in seq_len(nrow(dat))) {
-i_name <- dat$model_a[k]
-j_name <- dat$model_b[k]
-win <- dat$winner[k]
-li <- lambda[i_name]
-lj <- lambda[j_name]
-ri <- exp(li)
-rj <- exp(lj)
-
-denom <- ri + rj + nu * sqrt(ri * rj)
-if (win == "model_a") {
-  ll <- ll + log(ri) - log(denom)
-} else if (win == "model_b") {
-  ll <- ll + log(rj) - log(denom)
-} else if (win == "tie") {
-  ll <- ll + log(nu * sqrt(ri * rj)) - log(denom)
-}
-}
--ll
-}
-```
-
-
-```{r, eval = F}
-bt_trace <- list(iter = 0, values = numeric()) 
-
-bt_tie_loglik_traced <- function(par, dat, players) {
-val <- bt_tie_loglik(par, dat, players)
-
-bt_trace$iter <- bt_trace$iter + 1
-bt_trace$values[bt_trace$iter] <- val
-
-#cat("Iter:", bt_trace$iter, " Neg log-lik:", val, "\n")
-flush.console()
-
-return(val)
-}
-
-init_par <- c(rep(0, J - 1), 0)
-
-fit_bt_tie <- optim(
-par = init_par,
-fn = bt_tie_loglik_traced,
-dat = x_bt_tie,
-players = players,
-method = "BFGS",
-hessian = FALSE,
-control = list(reltol = 1e-4, trace = 1) 
-)
-
-fit_bt_tie$convergence
-```
-
-```{r, eval =F}
-theta_hat <- fit_bt_tie$par[1:(J - 1)]
-log_nu_hat <- fit_bt_tie$par[J]
-
-abilities_tie <- c(0, theta_hat)
-names(abilities_tie) <- players
-nu_hat <- exp(log_nu_hat)
-
-leaderboard_tie <- tibble(
-model = players,
-ability = abilities_tie
-) %>%
-arrange(desc(ability)) %>%
-mutate(rank = row_number()) %>%
-select(rank, model, ability)
-
-print(leaderboard_tie, n = 20)
-```
-
-```{r, eval = F }
-nd_all <- expand.grid(
-player1 = players,
-player2 = players,
-KEEP.OUT.ATTRS = FALSE,
-stringsAsFactors = FALSE
-) %>%
-filter(player1 != player2)
-
-matchups_compare <- nd_all %>%
-rowwise() %>%
-mutate(
-eta_bt = abilities[player1] - abilities[player2],
-p_bt_player1_win = plogis(eta_bt),
-p_bt_player2_win = 1 - p_bt_player1_win,
-
-lam1_tie = abilities_tie[player1],
-lam2_tie = abilities_tie[player2],
-r1_tie   = exp(lam1_tie),
-r2_tie   = exp(lam2_tie),
-
-denom_tie = r1_tie + r2_tie + nu_hat * sqrt(r1_tie * r2_tie),
-
-p_tie_player1_win = r1_tie / denom_tie,
-p_tie_player2_win = r2_tie / denom_tie,
-p_tie             = nu_hat * sqrt(r1_tie * r2_tie) / denom_tie
-
-) %>%
-ungroup() %>%
-select(
-player1, player2,
-p_bt_player1_win,
-p_bt_player2_win,
-p_tie_player1_win,
-p_tie_player2_win,
-p_tie
-)
-
-matchups_compare
-```
-
-
-```{r, figure.width=10, fig.height=10}
-
-players_ordered_full <- leaderboard %>%
-  arrange(desc(ability)) %>%
-  pull(model)
-
-top5    <- head(players_ordered_full, 5)
-bottom5 <- tail(players_ordered_full, 5)
-
-sub_players   <- c(top5, bottom5) |> unique()
-row_col_order <- players_ordered_full[players_ordered_full %in% sub_players]
-
-pair_grid_tie <- expand.grid(
-  row_model = row_col_order,
-  col_model = row_col_order,
-  stringsAsFactors = FALSE,
-  KEEP.OUT.ATTRS = FALSE
-) %>%
-  filter(row_model != col_model) %>%
-  left_join(
-    matchups_compare,
-    by = c("row_model" = "player1", "col_model" = "player2")
-  )
-
-big_grid_tie <- pair_grid_tie %>%
-  mutate(
-    p_left_win = p_tie_player1_win,
-    p_top_win  = p_tie_player2_win,
-    p_tie_only = p_tie,
-    p_both_lose = 0
-  ) %>%
-  pivot_longer(
-    cols = c(p_left_win, p_top_win, p_tie_only, p_both_lose),
-    names_to = "outcome",
-    values_to = "prob"
-  ) %>%
-  mutate(
-    sub_row = case_when(
-      outcome %in% c("p_left_win", "p_top_win") ~ 1L,
-      TRUE                                      ~ 2L
-    ),
-    sub_col = case_when(
-      outcome %in% c("p_left_win", "p_tie_only") ~ 1L,
-      TRUE                                       ~ 2L
-    ),
-    row_idx = match(row_model, row_col_order),
-    col_idx = match(col_model, row_col_order),
-    x = (col_idx - 1) * 2 + sub_col,
-    y = (row_idx - 1) * 2 + sub_row
-  )
-
-J_sub <- length(row_col_order)
-
-ggplot(big_grid_tie, aes(x = x, y = y, fill = prob)) +
-  geom_tile(color = "black", linewidth = 0.4) +
-  geom_text(aes(label = sprintf("%.2f", prob)), size = 2) +
-  coord_fixed() +
-  scale_fill_gradientn(
-    colours = c("grey85", "yellow", "red"),
-    values = scales::rescale(c(0, 0.5, 1))
-  ) +
-  scale_x_continuous(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
-  scale_y_reverse(
-    breaks = (2 * (1:J_sub)) - 0.5,
-    labels = row_col_order,
-    expand = c(0, 0)
-  ) +
-  labs(
-    x = "Models (columns, ranked by simple BT)",
-    y = "Models (rows, ranked by simple BT)",
-    fill = "Probability",
-    title = "Davidson Bradley–Terry with ties (top 5 and bottom 5)",
-    subtitle = "Each matchup cell is a 2×2 grid: TL=left wins, TR=top wins, BL=tie, BR=both lose (0 here)."
-  ) +
-  theme_minimal(base_size = 9) +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
-    plot.title = element_text(face = "bold")
-  )
-
-```
-
-
-## Enchanced BT Draw Model with Both Lose Term
-
-```{r, eval = F}
-x_bt_tie <- x %>%
-filter(
-winner %in% c("model_a", "model_b", "tie", "both_bad"),
-model_a != model_b
-)
-
-players <- sort(unique(c(x_bt_tie$model_a, x_bt_tie$model_b)))
-J <- length(players)
-
-```
-
-```{r, eval = F}
-bt_tie_loglik <- function(par, dat, players) {
-  theta <- par[1:(length(players) - 1)] 
-log_nu <- par[length(players)] 
-log_gamma <- par[length(players) + 1] 
-
-lambda <- c(0, theta) 
-names(lambda) <- players
-
-nu <- exp(log_nu)
-gamma <- exp(log_gamma) 
-
-ll <- 0
-for (k in seq_len(nrow(dat))) {
-i_name <- dat$model_a[k]
-j_name <- dat$model_b[k]
-win <- dat$winner[k]
-
-li <- lambda[i_name]
-lj <- lambda[j_name]
-ri <- exp(li)
-rj <- exp(lj)
-
-w_iwin   <- ri
-w_jwin   <- rj
-w_tie    <- nu * sqrt(ri * rj)
-w_bothbad <- gamma / (ri + rj)
-
-denom <- w_iwin + w_jwin + w_tie + w_bothbad
-
-if (win == "model_a") {
-  ll <- ll + log(w_iwin)   - log(denom)
-} else if (win == "model_b") {
-  ll <- ll + log(w_jwin)   - log(denom)
-} else if (win == "tie") {
-  ll <- ll + log(w_tie)    - log(denom)
-} else if (win == "both_bad") {
-  ll <- ll + log(w_bothbad) - log(denom)
-}
-
-}
--ll
-}
-```
-
-```{r, eval = F}
-bt_trace <- list(iter = 0, values = numeric())
-
-bt_tie_loglik_traced <- function(par, dat, players) {
-val <- bt_tie_loglik(par, dat, players)
-
-bt_trace$iter <- bt_trace$iter + 1
-bt_trace$values[bt_trace$iter] <- val
-
-flush.console()
-return(val)
-}
-
-init_par <- c(rep(0, J - 1), 0, 0)
-
-fit_bt_tie <- optim(
-par = init_par,
-fn = bt_tie_loglik_traced,
-dat = x_bt_tie,
-players = players,
-method = "BFGS",
-hessian = FALSE,
-control = list(reltol = 1e-4, trace = 1)
-)
-
-fit_bt_tie$convergence
-```
-```{r, eval = F}
-# Extract MLEs from optim fit
-theta_hat      <- fit_bt_tie$par[1:(J - 1)]
-log_nu_hat     <- fit_bt_tie$par[J]
-log_gamma_hat  <- fit_bt_tie$par[J + 1]
-
-abilities_tie <- c(0, theta_hat)      # lambda_1 = 0 reference
-names(abilities_tie) <- players
-
-nu_hat    <- exp(log_nu_hat)
-gamma_hat <- exp(log_gamma_hat)
-
-# All ordered pairs i != j
-all_pairs <- expand.grid(
-  player1 = players,
-  player2 = players,
-  KEEP.OUT.ATTRS = FALSE,
-  stringsAsFactors = FALSE
-) %>%
-  dplyr::filter(player1 != player2)
-
-# Predicted probabilities for each outcome
-matchups_enhanced <- all_pairs %>%
-  dplyr::rowwise() %>%
-  dplyr::mutate(
-    lambda1 = abilities_tie[player1],
-    lambda2 = abilities_tie[player2],
-    r1      = exp(lambda1),
-    r2      = exp(lambda2),
-
-    w_iwin    = r1,
-    w_jwin    = r2,
-    w_tie     = nu_hat * sqrt(r1 * r2),
-    w_bothbad = gamma_hat / (r1 + r2),
-
-    denom = w_iwin + w_jwin + w_tie + w_bothbad,
-
-    p_player1_win = w_iwin    / denom,
-    p_player2_win = w_jwin    / denom,
-    p_tie         = w_tie     / denom,
-    p_both_bad    = w_bothbad / denom
-  ) %>%
-  dplyr::ungroup() %>%
-  dplyr::select(
-    player1, player2,
-    p_player1_win, p_player2_win,
-    p_tie, p_both_bad
-  )
-
-matchups_enhanced
-
-```
+#### Model 2:
+
+In model 2, we keep the failure probabilities, but assume that a failure from
+either model simply derails the competition and forces a 'both-bad' outcome.
+
+$$
+Y^\text{observed}_{ij} = 
+\begin{cases}
+Y_{ij} \quad \quad  (F_i \neq 1) \& (F_j \neq 1) \\
+\text{both bad} \quad  \quad \text{otherwise}
+\end{cases}
+$$
+
+#### Estimation and Inference
+
+We calculate the likelihood with the law of total probability: 
+
+$$
+P(Y^\text{observed}_{ij} | \lambda, c,\rho) = P(Y_{ij} | \lambda, c , \rho)P(!\text{both bad} | \lambda, c, \rho) + P(\text{both bad} | \lambda, c, \rho)
+$$
+
+
+The expression $P(\text{both bad} | \lambda, c, \rho)$ is computed by
+marginalizing over $F_i$ and $F_j$ which must be done seperately for each
+model, as the different rules for determining whether a both-bad outcome occurs
+imply different probabilities of both-bad for a given $\lambda, c, and \rho$ 
+
+We code all of these models in the STAN programming language, which provides
+automatic differentiation and allows for efficient optimization of the models.
+All estimates reported are maximum a posteriori estimates obtained after
+placing $\mathcal{N}(0,2)$ priors on $\lambda$ and $c$, although the results
+are substantially identical when estimating via maximum likelihood.
+
+### Model Assessment
+
+In this section, we assess the performance of each model using a series of
+calibration plots and the cross-entropy loss when predicting the outcome of
+each match. The cross-entropy loss describes how well the model does when
+predicting the outcome of each match. High-cross entropy loss suggests that the
+model does assigns very low probability to the observed outcome of each match,
+while a low-cross entropy loss suggests that the model assigns high probability
+to observed outcomes
+
+We evaluate both of these models relative to a baseline ordered logistic
+regression model which assumes that the both-bad outcome happens with a fixed
+probability common to every matchup. We display the cross-entropy loss and
+calibration plots for this baseline model below.
+
+![Calibration Plot For Baseline Model - Ordered Logistic Regression With Common Chance of "Both Bad" Outcome](calibration_plots/common_faliure_prob_calibration.png)
+The dashed 45-degree lines on each plot show perfect calibration, while the
+blue line shows a linear regression of the actual frequency of an outcome
+observed within a dyad on the predicted probability of the outcome from the
+model.
+
+#### Model 1
+
+The first model is theoretically-plausible, but it does not describe the data
+well. Specifically, the MAP solution drastically overstates the probability of
+a 'both-bad' outcome, and the predictions perform worse (as measured by
+cross-entropy loss) than our ordered-logistic baseline, and worse even than a
+naive baseline that assumes every model has the same chance of winning, tying,
+loosing or the both-bad outcome. Because of this, we do not proceed further
+with this model.
+
+![Calibration Plot For Model 1](calibration_plots/both_model_calibration.png)
+
+#### Model 2
+
+The second model lines up worse with our expectations of how the prompt
+responses are scored, but it has excellent preditive performance. This model
+performs better the ordered-logistic baseline that assumes a constant global
+probability of faliure common to all units, and provides well-calibrated
+predictions for the match results. 
+
+The cross-entropy loss is lower than the ordered-logistic baseline, but the
+differences are not massive (2988 v.s. 2994), this is likely because the models
+should provide identical predictions conditional on the 'both-bad' outcomes not
+happpening, so all improvements in cross-entropy loss must come from
+improvements in accurately predicting this (relatively rare) outcome.
+
+![Calibration Plot For Model 2](calibration_plots/derail_model_calibration.png)
