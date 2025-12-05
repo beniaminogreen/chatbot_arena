@@ -58,13 +58,13 @@ generated quantities {
     real p_neither_fail = 1 - p_either_fail;
 
     // probability of A winning - either b only fails or neither fails and a wins
-    preds[i,1] = p_neither_fail * (1 - inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[1]));
+    validation[i,1] = p_neither_fail * (1 - inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[1]));
     // probability of B winning
-    preds[i,2] = p_neither_fail * (inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[2]));
+    validation[i,2] = p_neither_fail * (inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[2]));
     // probability of tie
-    preds[i,3] = p_neither_fail * (inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[1]) - inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[2]));
+    validation[i,3] = p_neither_fail * (inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[1]) - inv_logit(theta[validation_model_a[i]] -theta[validation_model_b[i]] - cutpoints[2]));
     // probability of both bad
-    preds[i,4] = p_either_fail;
+    validation[i,4] = p_either_fail;
   }
 
 }

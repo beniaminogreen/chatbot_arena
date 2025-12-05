@@ -591,10 +591,13 @@ probability common to every matchup. We display the cross-entropy loss and
 calibration plots for this baseline model below.
 
 ![Calibration Plot For Baseline Model - Ordered Logistic Regression With Common Chance of "Both Bad" Outcome](calibration_plots/common_faliure_prob_calibration.png)
+
 The dashed 45-degree lines on each plot show perfect calibration, while the
 blue line shows a linear regression of the actual frequency of an outcome
 observed within a dyad on the predicted probability of the outcome from the
-model.
+model. The fourth panel does not have a best-fit line, becasue this model
+predicts the same probability of 'both-bad' for each dyad hence there is no
+variation on the x-axis.
 
 #### Model 1
 
@@ -627,7 +630,7 @@ improvements in accurately predicting this (relatively rare) outcome.
 
 #### Leaderboard Produced by Flagship Model: 
 
-![Leaderboard Produced by Flagship Model 2](leaderboard_plots/derail_model.png)
+![Leaderboard Produced by Flagship Model 2. This is substantially identical to the leaderboard produced by the Bradley-Terry model](leaderboard_plots/derail_model.png)
 
 The ordering of these models are substantially identical to our basic
 Bradley-terry model that ignores tie outcomes and the 'both-bad' outcomes. The
@@ -639,4 +642,8 @@ The only difference is that the scores from the Bayesian model are mean-zero,
 while the estimates from the Bradley-terry model are estimated relative to the
 held-out Amazon model. However, these differences are not relevant when
 computing a ranking of the models.
+
+
+## Conclusion
+
 
