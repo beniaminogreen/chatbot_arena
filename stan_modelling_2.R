@@ -25,8 +25,6 @@
 #
 # Outputs are written to the `calibration_plots` directory, as well as to `predictions.csv` 
 
- 
-
 library(arrow)
 library(tidyverse)
 library(rstan)
@@ -50,16 +48,6 @@ saveRDS(x, file = 'chatbot.data.rds')
 
 rm(list = ls())
 x <- readRDS(file = 'chatbot.data.rds')
-
-# dim(x)
-# head(x)
-# table(x$winner)
-# identical(sort(unique(x$model_a)), sort(unique(x$model_b)))  # Nice.
-
-# Use this to gather 100 target matchups for prediction (see below).
-# Minor modifications may be needed but if you use my set.seed(1)
-# then every group should be making predictions for the same set
-# of 100 matchups.
 
 set.seed(1)
 numextras <- 100
@@ -110,30 +98,17 @@ stan_data <- list(
 )
 
 
-create_leaderboard_plot <- function(model_file) {
-  model_object <- stan_model(model_file)
 
-  MAP <- optimizing(
-    model_object, 
-    data = stan_data
-  )
-
-  thetas <- MAP$par[grepl("theta", names(MAP$par))]
-  names(thetas) <- names(model_lookup)
-
-  tibble(
-    model = names(thetas),
-    score = thetas
-  )  %>% 
-    ggplot(aes(x= reorder(model, score), y = score)) + 
-    coord_flip() + 
-    geom_point() + 
-    ggtitle("Model Leaderboard") + 
-    xlab("Model Name") + 
-    ylab("Model Score")  + 
-    theme_bw()
-}
-
+#' Create a Dataframe with the predicted and empirical probabilities 
+#' of each outcome by dyad
+#'
+#' @param model_file the location of the stan model used to generate
+#' predicted probabilities
+#'
+#' @param stan_data a list or environment containing the data needed 
+#' for STAN to fit the model
+#' 
+#'
 create_matchup_df <- function(model_file, stan_data) {
   model_object <- stan_model(model_file)
 
@@ -183,7 +158,31 @@ ce_loss <- function(df) {
   return (c(ce_loss_sum))
 }
 
-create_plots <- function(df, model_name = NULL) {
+create_leaderboard_plot <- function(model_file) {
+  model_object <- stan_model(model_file)
+
+  MAP <- optimizing(
+    model_object, 
+    data = stan_data
+  )
+
+  thetas <- MAP$par[grepl("theta", names(MAP$par))]
+  names(thetas) <- names(model_lookup)
+
+  tibble(
+    model = names(thetas),
+    score = thetas
+  )  %>% 
+    ggplot(aes(x= reorder(model, score), y = score)) + 
+    coord_flip() + 
+    geom_point() + 
+    ggtitle("Model Leaderboard") + 
+    xlab("Model Name") + 
+    ylab("Model Score")  + 
+    theme_bw()
+}
+
+create_calibration_plots <- function(df, model_name = NULL) {
   a_win_plot <- ggplot(df, aes(x=pred_a_win, y=perc_a_win)) + 
     geom_point(alpha = .15) + 
     geom_abline(slope=1, linetype = 2) + 
@@ -266,21 +265,30 @@ constant_forecast <- stan_df %>%
     pred_tie = naive_probs[3],
     pred_bb = naive_probs[4]
   )
+#
+#
+# plts <- create_calibration_plots(constant_forecast, "Constant Forecast")
+# ggsave("calibration_plots/baseline.png", plts, width = 8, height = 8)
+#
+# matchups_c <- create_matchup_df("common_faliure_prob.stan", stan_data)
+# plts <- create_calibration_plots(matchups_c, "Ordered-Logistic Baseline")
+# ggsave("calibration_plots/common_faliure_prob_calibration.png", plts, width = 8, height = 8)
+#
+# matchups_d <- create_matchup_df("derail_model.stan", stan_data)
+# plts <- create_calibration_plots(matchups_d, "Model 2")
+# ggsave("calibration_plots/derail_model_calibration.png", plts, width = 8, height = 8)
+#
+# matchups_b <- create_matchup_df("model_both.stan", stan_data)
+# plts <- create_calibration_plots(matchups_b, "Model 1")
+# ggsave("calibration_plots/both_model_calibration.png", plts,  width = 8, height = 8)
 
-plts <- create_plots(constant_forecast, "Constant Forecast")
-ggsave("calibration_plots/baseline.png", plts, width = 8, height = 8)
 
-matchups_c <- create_matchup_df("common_faliure_prob.stan", stan_data)
-plts <- create_plots(matchups_c, "Ordered-Logistic Baseline")
-ggsave("calibration_plots/common_faliure_prob_calibration.png", plts, width = 8, height = 8)
+############# Create Final Leaderboard Plot
+###
 
-matchups_d <- create_matchup_df("derail_model.stan", stan_data)
-plts <- create_plots(matchups_d, "Model 2")
-ggsave("calibration_plots/derail_model_calibration.png", plts, width = 8, height = 8)
+leadeboard_plot <- create_leaderboard_plot("derail_model.stan")
 
-matchups_b <- create_matchup_df("model_both.stan", stan_data)
-plts <- create_plots(matchups_b, "Model 1")
-ggsave("calibration_plots/both_model_calibration.png", plts,  width = 8, height = 8)
+ggsave("leaderboard_plots/derail_model.png", leadeboard_plot, width =8, height = 8)
 
 
 
