@@ -4,7 +4,7 @@ output : pdf_document
 
 # Measurement-Error Models
 
-In this section, consider two of measurement-error models, which aim to provide
+In this section, we consider two measurement-error models, which aim to provide
 accurate predictions for all four outcomes while respecting the ordered nature
 of the outcome for games that do not end in a 'both-bad' result.
 
@@ -14,7 +14,7 @@ performs well when predicting the frequency of these three outcomes among games
 that did not end in a 'both bad' outcome.
 
 $$
-Y_i 
+Y_i  ~ \text{ordered_logistic}(theta)
 $$
 
 However, across both models, we assume that each model $i$ has an indepent
@@ -48,5 +48,18 @@ Y_i \quad \quad  (X_i != 1) \& (X_i' != 1) \\
 \text{both bad} \quad  \quad \text{otherwise}
 \end{cases}
 $$
+
+The first model is theoretically-plausible, but it does not describe the data
+well. Specifically, the MAP solution drastically overstates the probability of
+a 'both-bad'outcome, and the predictions perform worse (as measured by
+cross-entropy loss) than a naive baseline prediction that assumes every model
+has the same chance of winning, tying, loosing or the both-bad outcome. Because
+of this, we do not proceed further with this model.
+
+The second model lines up worse with our expectations of how the prompt
+responses are scored, but it has excellent preditive performance. This model
+performs better than an ordinal-logistic regression model that assumes a
+constant global probability of faliure common to all units, and provides
+well-calibrated predictions for the match results. 
 
 
