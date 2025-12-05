@@ -461,7 +461,7 @@ scale_fill_gradientn(
     x = "Models (columns, ranked by simple BT)",
     y = "Models (rows, ranked by simple BT)",
     fill = "Probability",
-    title = "Pairwise outcome probabilitie (for top 5 and bottom 5 by BT ability)",
+    title = "Pairwise outcome probabilities (for top 5 and bottom 5 by BT ability)",
     subtitle = "For each matchup: TL=left wins, TR=bottom wins, BL=tie, BR=both bad."
   ) +
   theme_minimal(base_size = 9) +
